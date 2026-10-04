@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-04
+
 ### Changed
 
 - Replace 0.31.0's partition with one Durable Object per conversation and the Hub. Each conversation's object
@@ -21,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - The 0.31.0 partition classes, the operator entry point and its adoption runbook, and the `cutover` settings.
+- 0.31.0's per-command outcome records: as in 0.30.0, a command runs at most once and is never retried, so an
+  interrupted command may leave its "thinking…" unanswered; check Chatwoot before giving it again.
 
 ### Upgrade
 
@@ -696,7 +700,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.31.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.32.0...HEAD
+[0.32.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.31.0...chatwoot-discord-relay@0.32.0
 [0.31.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.30.0...chatwoot-discord-relay@0.31.0
 [0.30.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.29.0...chatwoot-discord-relay@0.30.0
 [0.29.0]: https://github.com/Phala-Network/chatwoot-workers/compare/v0.28.0...chatwoot-discord-relay@0.29.0

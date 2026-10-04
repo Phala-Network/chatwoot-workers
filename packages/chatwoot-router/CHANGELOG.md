@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-04
+
 ### Changed
 
 - Route each conversation in a Durable Object of its own, named `<account>:<conversation>`; one sweeper object
@@ -100,7 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.3.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.4.0...HEAD
+[0.4.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.3.0...chatwoot-router@0.4.0
 [0.3.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.2.0...chatwoot-router@0.3.0
 [0.2.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.1.0...chatwoot-router@0.2.0
 [0.1.0]: https://github.com/Phala-Network/chatwoot-workers/releases/tag/chatwoot-router@0.1.0
