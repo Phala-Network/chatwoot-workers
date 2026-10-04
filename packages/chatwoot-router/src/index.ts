@@ -4,7 +4,7 @@ import { isFreshTimestamp, verifyChatwootSignature } from "../../../shared/chatw
 import { ConfigError } from "../../../shared/config.ts";
 import { errorFields, log } from "../../../shared/log.ts";
 import type { Env } from "./env.ts";
-import { ROUTER_NAME } from "./router.ts";
+import { conversationRouter, sweeper } from "./router.ts";
 import { routesAccount } from "./routing.ts";
 import { loadSettings } from "./settings.ts";
 import { eventTarget } from "./webhook.ts";
@@ -48,7 +48,7 @@ app.post("/chatwoot/agent-bot", bodyLimit({ maxSize: 2 * 1024 * 1024 }), async (
   if (target.accountId !== signedBy || !routesAccount(settings, target.accountId)) {
     return context.text("account does not match the webhook secret", 403);
   }
-  await context.env.ROUTER.getByName(ROUTER_NAME).enqueueConversation(
+  await conversationRouter(context.env, target.accountId, target.conversationId).enqueueConversation(
     target.accountId,
     target.conversationId,
     target.transition,
@@ -65,7 +65,7 @@ app.onError((error, context) => {
 export default {
   fetch: app.fetch,
   async scheduled(_controller, env, context) {
-    context.waitUntil(env.ROUTER.getByName(ROUTER_NAME).requestSweep());
+    context.waitUntil(sweeper(env).requestSweep());
   },
 } satisfies ExportedHandler<Env>;
 

@@ -7,11 +7,17 @@ import {
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index.ts";
-import { ROUTER_NAME } from "../src/router.ts";
+import { conversationRouter, sweeper } from "../src/router.ts";
 import { json, mockFetch, on } from "./helpers.ts";
 import { activity, CW, incoming as customer, JEV, sent, world } from "./world.ts";
 
-const stub = () => env.ROUTER.getByName(ROUTER_NAME);
+const stub = () => sweeper(env);
+/** The sweeper and the objects of the conversations the tests use. */
+const objects = () => [
+  sweeper(env),
+  ...[5, ...Array.from({ length: 50 }, (_, index) => index + 11)].map((id) => conversationRouter(env, 1, id)),
+  conversationRouter(env, 2, 5),
+];
 const base = "chatwoot.example.com/api/v1/accounts/1/conversations";
 const incoming = (conversationId: number, accountId = 1) => ({
   event: "message_created",
@@ -46,33 +52,37 @@ async function webhook(payload: unknown, secret = "secret-acme", age = 0): Promi
 async function drain(timeout = 5000): Promise<void> {
   await vi.waitFor(
     async () => {
-      const due = await runInDurableObject(
-        stub(),
-        (_instance, state) =>
-          state.storage.sql
-            .exec<{ count: number }>("SELECT COUNT(*) AS count FROM jobs WHERE not_before <= ?", Date.now())
-            .one().count,
-      );
+      let due = 0;
+      for (const object of objects())
+        due += await runInDurableObject(
+          object,
+          (_instance, state) =>
+            state.storage.sql
+              .exec<{ count: number }>("SELECT COUNT(*) AS count FROM jobs WHERE not_before <= ?", Date.now())
+              .one().count,
+        );
       expect(due).toBe(0);
     },
-    { timeout, interval: 20 },
+    { timeout, interval: 50 },
   );
 }
 
 afterEach(async () => {
   await drain();
-  await runInDurableObject(stub(), async (_instance, state) => {
-    state.storage.sql.exec("DELETE FROM jobs; DELETE FROM cache");
-    await state.storage.deleteAlarm();
-  });
+  for (const object of objects())
+    await runInDurableObject(object, async (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM jobs; DELETE FROM cache");
+      await state.storage.deleteAlarm();
+    });
   vi.restoreAllMocks();
 });
 
 async function retryNow() {
-  await runInDurableObject(stub(), async (_instance, state) => {
-    state.storage.sql.exec("UPDATE jobs SET not_before = 0");
-    await state.storage.setAlarm(Date.now());
-  });
+  for (const object of objects())
+    await runInDurableObject(object, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE jobs SET not_before = 0");
+      await state.storage.setAlarm(Date.now());
+    });
   await drain();
 }
 
@@ -372,12 +382,13 @@ describe("account sweep", () => {
     await worker.scheduled(createScheduledController(), env, execution);
     await waitOnExecutionContext(execution);
     await drain(15000);
-    expect(mock.pending.size).toBe(25);
-    expect(mock.pages).toEqual([1, 2]);
+    // Conversations are routed while the sweep pages on, so the list shifts under it: the next pass
+    // covers what this one skipped.
+    expect(mock.pending.size).toBeLessThanOrEqual(25);
+    expect(mock.pages.slice(0, 2)).toEqual([1, 2]);
     await stub().requestSweep();
     await drain(15000);
     expect(mock.pending.size).toBe(0);
-    expect(mock.pages).toEqual([1, 2, 1, 2]);
     expect(sent(mock.requests, "POST", JEV)).toHaveLength(50);
   }, 30000);
 
@@ -397,7 +408,7 @@ describe("account sweep", () => {
     const mock = sweepWorld(false, true);
     await stub().requestSweep();
     await drain(15000);
-    expect(mock.pending.size).toBe(25);
+    expect(mock.pending.size).toBeLessThanOrEqual(25);
     await stub().requestSweep();
     await drain(15000);
     expect(mock.pending.size).toBe(0);

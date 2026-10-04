@@ -1,7 +1,11 @@
+// Routes each conversation in a Durable Object of its own, so a slow Jev or Chatwoot request for
+// one conversation never delays another. One more object pages the accounts every five minutes and
+// hands the conversations to theirs.
+
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { Budget, BudgetExhaustedError } from "../../../shared/budget.ts";
-import { ChatwootError, chatwootClient } from "../../../shared/chatwoot/api.ts";
+import { ChatwootError, CONVERSATIONS_PER_PAGE, chatwootClient } from "../../../shared/chatwoot/api.ts";
 import { parseJson } from "../../../shared/json.ts";
 import { errorFields, log } from "../../../shared/log.ts";
 import { QueueStore, retryDelay } from "../../../shared/store.ts";
@@ -11,8 +15,19 @@ import { loadSettings } from "./settings.ts";
 import { clearFailures, expectActivity, recordFailure } from "./turn.ts";
 import type { Transition } from "./webhook.ts";
 
-export const ROUTER_NAME = "global";
-const BUDGET = { route: 45, sweep: 1 };
+/** The object that sweeps the accounts; each conversation is routed by an object of its own. */
+const SWEEP_NAME = "global";
+/** A sweep page, and one call per conversation in it. */
+const BUDGET = { route: 45, sweep: 1 + CONVERSATIONS_PER_PAGE };
+
+export function sweeper(env: Env) {
+  return env.ROUTER.getByName(SWEEP_NAME);
+}
+
+export function conversationRouter(env: Env, accountId: number, conversationId: number) {
+  return env.ROUTER.getByName(`${accountId}:${conversationId}`);
+}
+
 const RUN_WALL_MS = 5 * 60 * 1000;
 const id = z.number().int().positive();
 const jobSchema = z.discriminatedUnion("type", [
@@ -77,6 +92,7 @@ export class Router extends DurableObject<Env> {
         } else if (routesAccount(settings, payload.accountId)) {
           await this.sweep(
             chatwoot,
+            budget,
             payload.accountId,
             payload.status,
             settings.config.routing.botIds[String(payload.accountId)],
@@ -114,6 +130,7 @@ export class Router extends DurableObject<Env> {
 
   private async sweep(
     chatwoot: ReturnType<typeof chatwootClient>,
+    budget: Budget,
     accountId: number,
     status: "pending" | "open",
     botId: number | undefined,
@@ -123,14 +140,19 @@ export class Router extends DurableObject<Env> {
     const page = saved.success ? saved.data : 1;
     // Route snapshots decide ownership from live state, including disconnected bot leftovers.
     const conversations = await chatwoot.listConversations(accountId, page, status);
-    for (const conversation of conversations) {
-      if (
-        conversation.id !== undefined &&
-        (status === "pending" ||
-          (conversation.meta?.assignee_type === "AgentBot" && conversation.meta.assignee?.id === botId))
-      )
-        this.enqueue({ type: "route", accountId, conversationId: conversation.id });
-    }
+    const routed = conversations.flatMap((conversation) =>
+      conversation.id !== undefined &&
+      (status === "pending" ||
+        (conversation.meta?.assignee_type === "AgentBot" && conversation.meta.assignee?.id === botId))
+        ? [conversation.id]
+        : [],
+    );
+    for (const _ of routed) budget.consume();
+    await Promise.all(
+      routed.map((conversationId) =>
+        conversationRouter(this.env, accountId, conversationId).enqueueConversation(accountId, conversationId),
+      ),
+    );
     if (conversations.length === 0) {
       this.store.delete(key);
       return;
