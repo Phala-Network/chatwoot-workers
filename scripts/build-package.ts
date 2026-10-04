@@ -16,12 +16,7 @@ function run(command: string, args: string[]): void {
 rmSync("lib", { recursive: true, force: true });
 run("cf", ["workers", "types"]);
 await build({
-  entryPoints: [
-    "src/index.ts",
-    "scripts/stored-config.ts",
-    "scripts/store-config.ts",
-    ...(manifest.name === "chatwoot-discord-relay" ? ["src/operator.ts"] : []),
-  ],
+  entryPoints: ["src/index.ts", "scripts/stored-config.ts", "scripts/store-config.ts"],
   bundle: true,
   platform: "node",
   format: "esm",

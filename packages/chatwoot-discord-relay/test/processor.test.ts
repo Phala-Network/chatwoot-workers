@@ -4,25 +4,16 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Budget, JobDeadlineError } from "../../../shared/budget.ts";
+import { Budget } from "../../../shared/budget.ts";
 import { chatwootClient } from "../../../shared/chatwoot/api.ts";
 import type { Settings } from "../src/config.ts";
+import { DiscordForum } from "../src/discord/forum.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
-import { type ProcessOutcome, processConversation, refreshMetadata, relayFor } from "../src/relay/processor.ts";
+import { minimumBudget, requestsPerMessage } from "../src/relay/limits.ts";
+import { type ProcessOutcome, processConversation, relayFor } from "../src/relay/processor.ts";
 import { processMessageUpdate } from "../src/relay/updates.ts";
 import { Store } from "../src/store.ts";
-import {
-  ALICE,
-  BOB,
-  TestForum as DiscordForum,
-  FORUM,
-  json,
-  mockFetch,
-  on,
-  type Recorded,
-  TRIAGE,
-  testSettings,
-} from "./helpers.ts";
+import { ALICE, BOB, FORUM, json, mockFetch, on, type Recorded, TRIAGE, testSettings } from "./helpers.ts";
 
 const GUILD = "100000000000000044";
 const now = () => Math.floor(Date.now() / 1000);
@@ -54,12 +45,10 @@ class World {
   failLinks = 0;
   /** Assignee announcements Discord fails before accepting them. */
   failAnnouncements = 0;
-  failAnnouncementsStatus = 503;
   /** Posts deleted in Discord. */
   goneThreads = new Set<string>();
   /** New posts Discord fails before accepting them. */
   failPosts = 0;
-  failPostsStatus = 503;
   /** Discord's answer to posting into a thread, while it fails. */
   threadFailure: (() => Response) | undefined;
   /** Discord users by id; others are unknown to Discord. */
@@ -138,15 +127,15 @@ class World {
           String(JSON.parse(request.body).content).startsWith("-# Assigned to")
         ) {
           this.failAnnouncements -= 1;
-          return json({ message: "unavailable" }, { status: this.failAnnouncementsStatus });
+          return json({ message: "unavailable" }, { status: 503 });
         }
         if (thread) return json({ id: String(100000000000001000n + BigInt(this.requests.length)), channel_id: thread });
         if (this.failPosts > 0) {
           this.failPosts -= 1;
-          return json({ message: "unavailable" }, { status: this.failPostsStatus });
+          return json({ message: "unavailable" }, { status: 503 });
         }
         this.threads += 1;
-        return json({ id: "100000000000001000", channel_id: `20000000000000000${this.threads}` });
+        return json({ id: "card", channel_id: `20000000000000000${this.threads}` });
       }),
     ).requests;
   }
@@ -183,37 +172,26 @@ class World {
 }
 
 async function withStore<T>(run: (store: Store) => Promise<T>): Promise<T> {
-  return runInDurableObject(env.CONVERSATION.getByName(`processor-${crypto.randomUUID()}`), (_instance, state) => {
+  return runInDurableObject(env.HUB.getByName(`processor-${crypto.randomUUID()}`), (_instance, state) => {
     const store = new Store(state.storage.sql);
     store.migrate();
     return run(store);
   });
 }
 
-/** What a conversation gives a job: services over one invocation's budget. */
+/** What the Hub gives a job: services over one invocation's budget. */
 function context(store: Store, settings: Settings, limit = settings.config.relay.subrequestBudget) {
   const budget = new Budget(limit);
   const chatwoot = chatwootClient(settings.config.chatwoot.baseUrl, "relay-token", budget.fetch);
   const rest = new DiscordRest("bot", budget.fetch);
   const forum = new DiscordForum(rest, store);
-  return {
-    settings,
-    store,
-    forum,
-    rest,
-    budget,
-    chatwoot,
-    relay: relayFor(settings, forum, store),
-    enqueueMetadata: () => undefined,
-  };
+  return { settings, store, forum, rest, budget, chatwoot, relay: relayFor(settings, forum, store) };
 }
 
-/** Runs the conversation job until it is done, each run with a fresh budget, like its conversation alarm does. */
+/** Runs the conversation job until it is done, each run with a fresh budget, like the Hub does. */
 async function sync(store: Store, settings: Settings, limit?: number): Promise<ProcessOutcome[]> {
   const outcomes: ProcessOutcome[] = [];
-  for (let run = 0; run < 100; run += 1) {
-    // Each continuation is a later alarm; advance its upstream window without a real sleep.
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1101);
+  for (let run = 0; run < 30; run += 1) {
     const outcome = await processConversation(context(store, settings, limit), 3, 12);
     outcomes.push(outcome);
     if (outcome === "done") return outcomes;
@@ -236,7 +214,7 @@ describe("processConversation", () => {
       { id: 501, content: "Update from Kim", message_type: 1 },
       { id: 502, content: "Kim updated the ticket", message_type: 2 },
     ];
-    await runInDurableObject(env.CONVERSATION.getByName("legacy-processor"), async (_instance, state) => {
+    await runInDurableObject(env.HUB.getByName("legacy-processor"), async (_instance, state) => {
       // A legacy database fixture, independent of the current migration implementation.
       const sql = state.storage.sql;
       for (const table of [
@@ -350,20 +328,19 @@ describe("processConversation", () => {
         parts += 1;
         return parts === 1
           ? json({ id: "100000000000008001", channel_id: oldThread })
-          : json({ message: "rate limited", retry_after: 1 }, { status: 429 });
+          : json({ message: "unavailable" }, { status: 503 });
       };
-      await expect(sync(store, settings)).rejects.toThrow("429");
+      await expect(sync(store, settings)).rejects.toThrow("503");
       expect(world.posts().at(-2)?.body.content).toBe(long.slice(0, 1674));
       // The deleted thread invalidates unfinished parts and response digests, but not the completed cursor.
       world.goneThreads.add(oldThread);
       world.threadFailure = () => {
         world.threadFailure = undefined;
         world.failPosts = 1;
-        world.failPostsStatus = 429;
         return json({ message: "Unknown Channel", code: 10003 }, { status: 404 });
       };
       // Fail after forgetting the deleted thread, before a new post or cursor can mask a lost checkpoint.
-      await expect(sync(store, settings)).rejects.toThrow("429");
+      await expect(sync(store, settings)).rejects.toThrow("503");
       await sync(store, settings);
       expect(world.replies().filter((text) => text === "Completed history")).toHaveLength(1);
       const newThread = world.posts().at(-1)?.thread;
@@ -418,7 +395,7 @@ describe("processConversation", () => {
     });
   });
 
-  it("pages through more than 100 messages across bounded alarms", async () => {
+  it("pages through more than 100 messages in one run", async () => {
     const world = new World();
     world.messages = Array.from({ length: 130 }, (_, index) => ({
       id: index + 1,
@@ -426,12 +403,10 @@ describe("processConversation", () => {
       message_type: 1,
     }));
     await withStore(async (store) => {
-      await sync(store, testSettings(), 35);
+      expect(await sync(store, testSettings(), 1000)).toEqual(["done"]);
       expect(world.replies()).toEqual(world.messages.map((message) => message.content));
       const pages = world.sent("GET", "/messages").map((request) => request.url.searchParams.get("after"));
-      expect(pages[0]).toBe("0");
-      expect(Number(pages.at(-1))).toBeGreaterThan(100);
-      expect(store.conversation(3, 12)?.cursor).toBe(130);
+      expect(pages).toEqual(["0", "100"]);
     });
   });
 
@@ -443,7 +418,7 @@ describe("processConversation", () => {
       content: `n${index + 1}`,
       message_type: 1,
     }));
-    const limit = 20;
+    const limit = requestsPerMessage(settings.config.relay.maxChunks) + 10;
     await withStore(async (store) => {
       const outcomes = await sync(store, settings, limit);
       expect(outcomes.length).toBeGreaterThan(2);
@@ -453,7 +428,7 @@ describe("processConversation", () => {
   });
 
   it("relays a message in its worst case within the smallest budget the configuration accepts", async () => {
-    const settings = testSettings({ relay: { maxChunks: 10, subrequestBudget: 20 } });
+    const settings = testSettings({ relay: { maxChunks: 10, subrequestBudget: minimumBudget(10) } });
     const world = new World();
     // The link attribute names a post deleted in Discord: checked, then a new post is opened.
     world.goneThreads.add("300000000000000009");
@@ -465,7 +440,7 @@ describe("processConversation", () => {
       { id: 1, content: "x\n".repeat(15_000), message_type: 1, sender: { id: 43, type: "user", name: "Bob" } },
     ];
     await withStore(async (store) => {
-      expect((await sync(store, settings)).length).toBeGreaterThan(1);
+      expect(await sync(store, settings)).toEqual(["done"]);
       const replies = world.replies();
       expect(replies).toHaveLength(11);
       expect(replies.at(-1)).toMatch(/^-# Message truncated/);
@@ -477,6 +452,7 @@ describe("processConversation", () => {
       "a rate limit",
       () => json({ message: "You are being rate limited.", retry_after: 64.5, global: false }, { status: 429 }),
     ],
+    ["a server error", () => json({ message: "Internal Server Error" }, { status: 500 })],
     ["missing permissions", () => json({ message: "Missing Permissions", code: 50013 }, { status: 403 })],
   ])("never skips a message because of %s, however often it fails", async (_name, failure) => {
     const settings = testSettings();
@@ -509,13 +485,17 @@ describe("processConversation", () => {
       await sync(store, settings);
       world.messages.push({ id: 2, content: "refused", message_type: 1 });
       // Refused on every attempt; the notice afterwards is accepted.
-      world.threadFailure = () => json({ message: "Invalid Form Body", code: 50035 }, { status: 400 });
+      let refusals = maxAttempts;
+      world.threadFailure = () => {
+        refusals -= 1;
+        return refusals >= 0
+          ? json({ message: "Invalid Form Body", code: 50035 }, { status: 400 })
+          : json({ id: "notice", channel_id: "x" });
+      };
       for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
         await expect(processConversation(context(store, settings), 3, 12)).rejects.toThrow(/Discord HTTP 400/);
       }
-      world.threadFailure = undefined;
       expect(await processConversation(context(store, settings), 3, 12)).toBe("done");
-      expect(world.replies().filter((content) => content === "refused")).toHaveLength(1);
 
       expect(world.posts().at(-1)?.body.content).toBe(
         "⚠️ Chatwoot message 2 could not be relayed. Check it in Chatwoot.",
@@ -623,7 +603,6 @@ describe("processConversation", () => {
     world.failAnnouncements = 1;
     await withStore(async (store) => {
       const settings = testSettings();
-      world.failAnnouncementsStatus = 429;
       await expect(sync(store, settings)).rejects.toThrow();
       await sync(store, settings);
       // The customer message was posted once; the announcement failed, then its retry succeeded.
@@ -838,12 +817,9 @@ describe("agent avatars", () => {
       },
     ];
     await withStore(async (store) => {
-      const settings = testSettings();
-      await refreshMetadata(context(store, settings), { accountId: 3, discordUserId: BOB });
-      await refreshMetadata(context(store, settings), { accountId: 3, discordUserId: ALICE });
-      await sync(store, settings);
+      await sync(store, testSettings());
       world.messages.push(agent(7, 43));
-      await sync(store, settings);
+      await sync(store, testSettings());
       expect(avatars(world)).toEqual([
         `${cdn}/avatars/${BOB}/a_bob.png`,
         `${cdn}/embed/avatars/${(BigInt(ALICE) >> 22n) % 6n}.png`,
@@ -863,9 +839,7 @@ describe("agent avatars", () => {
     const world = new World();
     world.messages = [agent(1, 43, "https://chatwoot.example.com/bob.png"), agent(2, 43)];
     await withStore(async (store) => {
-      const settings = testSettings();
-      await refreshMetadata(context(store, settings), { accountId: 3, discordUserId: BOB });
-      expect(await sync(store, settings)).toEqual(["done"]);
+      expect(await sync(store, testSettings())).toEqual(["done"]);
       expect(avatars(world)).toEqual([
         "https://chatwoot.example.com/bob.png",
         "https://chatwoot.example.com/favicon-512x512.png",
@@ -1054,7 +1028,7 @@ describe("agent bot lifecycle", () => {
     await withStore(async (store) => {
       const settings = testSettings();
       for (let alarm = 0; alarm < 5 && world.posts().length === 0; alarm += 1) {
-        await processConversation(context(store, settings, 20), 3, 12);
+        await processConversation(context(store, settings, minimumBudget(4)), 3, 12);
       }
       expect(world.replies().find((text) => text.startsWith("A customer request"))).toContain(`<@${TRIAGE}>`);
     });
@@ -1072,7 +1046,7 @@ describe("agent bot lifecycle", () => {
       ];
       await withStore(async (store) => {
         const settings = testSettings();
-        expect(await processConversation(context(store, settings, 5), 3, 12)).toBe("yield");
+        expect(await processConversation(context(store, settings, minimumBudget(4)), 3, 12)).toBe("yield");
         expect(world.posts()).toEqual([]);
 
         if (change === "arrives") world.messages.push(reply);
@@ -1082,29 +1056,5 @@ describe("agent bot lifecycle", () => {
         expect(customer?.includes(`<@${TRIAGE}>`)).toBe(change === "fails");
       });
     },
-    10_000, // This scenario also relays all 301 activity messages through the real SQLite store.
   );
-});
-
-it("continues after a time slice without replaying already posted messages", async () => {
-  const world = new World();
-  world.messages = [
-    { id: 901, content: "first", message_type: 2 },
-    { id: 902, content: "second", message_type: 2 },
-  ];
-  const settings = testSettings();
-  await withStore(async (store) => {
-    store.adoptThread(3, 12, "100000000000000901");
-    store.setCursor(3, 12, 0);
-    const services = context(store, settings);
-    services.budget.startSlice(150);
-    const checkpoint = services.budget.checkpoint.bind(services.budget);
-    vi.spyOn(services.budget, "checkpoint").mockImplementation(() => {
-      if (world.replies().length === 1) throw new JobDeadlineError();
-      checkpoint();
-    });
-    await expect(processConversation(services, 3, 12)).rejects.toThrow(/time slice/);
-    await sync(store, settings);
-    expect(world.replies()).toEqual(["_first_", "_second_"]);
-  });
 });

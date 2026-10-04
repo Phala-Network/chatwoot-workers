@@ -63,7 +63,7 @@ function world(open: Open[], { failPost = 0, rateLimit = false }: { failPost?: n
         failures -= 1;
         return json({ message: "Internal Server Error" }, { status: 500 });
       }
-      return json({ id: String(100000000000001000n + BigInt(posts)) });
+      return json({ id: `m-${posts}` });
     }),
   );
 }
@@ -75,7 +75,7 @@ function context(store = new MapStore(), escalation: object = { escalationRoleId
     settings,
     store,
     chatwoot: chatwootClient(settings.config.chatwoot.baseUrl, "relay-token", fetch),
-    rest: new DiscordRest("bot", fetch),
+    rest: new DiscordRest("bot", fetch, async () => {}),
   };
 }
 
@@ -169,12 +169,12 @@ describe("support queue", () => {
 
   it("escalates an unassigned ticket once per step of its wait", async () => {
     const store = new MapStore();
-    const hours = [0.5, 3, 4, 16, 40];
+    const hours = [0.5, 3, 3.5, 4, 16, 40];
     const { requests } = world([{ id: 1, waiting: 3 }]);
 
     for (const [index, elapsed] of hours.entries()) {
       await postQueue(context(store), (NOW + (elapsed - 3) * HOUR) * 1000);
-      expect(posted(requests)[index].allowed_mentions.roles).toEqual(elapsed === 0.5 ? [] : [ROLE]);
+      expect(posted(requests)[index].allowed_mentions.roles).toEqual(elapsed === 0.5 || elapsed === 3.5 ? [] : [ROLE]);
     }
   });
 
@@ -203,7 +203,7 @@ describe("support queue", () => {
     const store = new MapStore();
     const others = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ id: 1000 + i, waiting: 1, assignee: { id: 43, name: "Bob" } }));
-    const late = { id: 1, waiting: 8 };
+    const late = { id: 1, waiting: 3 };
 
     const runs = [
       [late, ...others(20)],
@@ -211,12 +211,10 @@ describe("support queue", () => {
       [late, ...others(20)],
     ];
     const roles: string[][] = [];
-    for (const [index, open] of runs.entries()) {
+    for (const open of runs) {
       vi.restoreAllMocks();
-      const { requests } = world(
-        open.map((ticket) => ({ ...ticket, ...(ticket.waiting ? { waiting: ticket.waiting } : {}) })),
-      );
-      await postQueue(context(store), NOW * 1000 + index * HOUR * 1000);
+      const { requests } = world(open);
+      await postQueue(context(store), NOW * 1000);
       roles.push(posted(requests)[0].allowed_mentions.roles);
     }
 
@@ -236,7 +234,7 @@ describe("support queue", () => {
     const open = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, waiting: 2 }));
     const { requests } = world(open, { failPost: 1 });
 
-    await postQueue(context(store), NOW * 1000);
+    await expect(postQueue(context(store), NOW * 1000)).rejects.toThrow();
     await postQueue(context(store), NOW * 1000);
 
     const messages = posted(requests);
@@ -244,9 +242,8 @@ describe("support queue", () => {
     expect(messages.every((message) => message.content.length <= 2000)).toBe(true);
     expect(messages.at(-1).content).toMatch(/…and (\d+ )?more: see Chatwoot\.$/);
     expect(messages.filter((message) => message.allowed_mentions.roles.length > 0)).toHaveLength(1);
-    // Unknown part is terminal; the unsent tail continues and a replay creates nothing.
+    // A retry sends the same nonces, so Discord creates no message twice.
     expect(messages.every((message) => message.enforce_nonce === true)).toBe(true);
-    expect(new Set(messages.map((message) => message.nonce)).size).toBe(messages.length);
-    expect(store.get(`effect:digest:${CHANNEL}:${Math.floor(NOW / 3600)}:1`)).toContain("UNKNOWN");
+    expect(messages[0].nonce).toBe(messages[2].nonce);
   });
 });

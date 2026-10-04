@@ -1,1 +1,1 @@
-export { Coordinator, default, Router } from "chatwoot-router";
+export { default, Router } from "chatwoot-router";
