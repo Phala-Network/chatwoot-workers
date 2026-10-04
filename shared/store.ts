@@ -2,25 +2,20 @@ export function retryDelay(attempts: number): number {
   return Math.min(5000 * 2 ** attempts, 30 * 60 * 1000);
 }
 
-export type Job = {
+export interface Job {
   key: string;
   payload: string;
   version: number;
   attempts: number;
   /** When the job was first queued (ms since the epoch). */
   createdAt: number;
-};
+}
 
 export class QueueStore {
   constructor(
     protected readonly sql: SqlStorage,
     protected readonly now: () => number = Date.now,
-    private readonly atomic: <T>(write: () => T) => T = (write) => write(),
   ) {}
-
-  transaction<T>(write: () => T): T {
-    return this.atomic(write);
-  }
 
   migrate(): void {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS jobs (
@@ -30,10 +25,6 @@ export class QueueStore {
     );
     CREATE INDEX IF NOT EXISTS jobs_due ON jobs (not_before);
     CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER);`);
-    const columns = this.sql.exec<{ name: string }>("PRAGMA table_info(jobs)").toArray();
-    if (!columns.some((column) => column.name === "suspended")) {
-      this.sql.exec("ALTER TABLE jobs ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0");
-    }
   }
 
   // Cache
@@ -68,7 +59,7 @@ export class QueueStore {
   enqueue(key: string, priority: number, payload: string, notBefore = this.now()): void {
     this.sql.exec(
       `INSERT INTO jobs (key, priority, payload, not_before, created_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (key) DO UPDATE SET version = version + 1, payload = excluded.payload, suspended = 0,
+       ON CONFLICT (key) DO UPDATE SET version = version + 1, payload = excluded.payload,
          not_before = CASE WHEN attempts > 0 THEN not_before ELSE MIN(not_before, excluded.not_before) END`,
       key,
       priority,
@@ -79,30 +70,21 @@ export class QueueStore {
   }
 
   nextDueJob(): Job | undefined {
-    return this.nextDueJobs(1)[0];
-  }
-
-  /** A bounded due batch; independent scan and delivery work can select their own keys. */
-  nextDueJobs(limit: number, prefix = ""): Job[] {
-    return this.sql
-      .exec<Job>(
-        `SELECT key, payload, version, attempts, created_at AS createdAt FROM jobs
-         WHERE suspended != 2 AND not_before <= ? AND substr(key, 1, ?) = ?
-         ORDER BY MAX(0, priority - CAST((? - created_at) / 30000 AS INTEGER)), not_before, created_at LIMIT ?`,
+    const row = this.sql
+      .exec<{ key: string; payload: string; version: number; attempts: number; created_at: number }>(
+        `SELECT key, payload, version, attempts, created_at FROM jobs WHERE not_before <= ?
+         ORDER BY priority, not_before, created_at LIMIT 1`,
         this.now(),
-        prefix.length,
-        prefix,
-        this.now(),
-        limit,
       )
-      .toArray();
+      .toArray()[0];
+    if (!row) return undefined;
+    const { created_at: createdAt, ...job } = row;
+    return { ...job, createdAt };
   }
 
   /** Earliest due time. */
   nextWakeup(): number | undefined {
-    const row = this.sql
-      .exec<{ at: number | null }>("SELECT MIN(not_before) AS at FROM jobs WHERE suspended != 2")
-      .toArray()[0];
+    const row = this.sql.exec<{ at: number | null }>("SELECT MIN(not_before) AS at FROM jobs").toArray()[0];
     return row?.at ?? undefined;
   }
 
@@ -132,20 +114,17 @@ export class QueueStore {
     this.sql.exec("UPDATE jobs SET not_before = ? WHERE key = ?", this.now() + delayMs, job.key);
   }
 
-  /** One short re-read for a racing status webhook, then wait for an event or a sweep. */
-  holdJob(job: Job): void {
+  /**
+   * Makes a job due again after `delayMs`, unless it was queued again while it ran (it is due
+   * then), clearing its failures.
+   */
+  postponeJob(job: Job, delayMs: number): void {
     this.sql.exec(
-      `UPDATE jobs SET suspended = CASE WHEN suspended = 0 THEN 1 ELSE 2 END,
-       not_before = ?, attempts = 0 WHERE key = ? AND version = ?`,
-      this.now() + 1000,
+      "UPDATE jobs SET not_before = ?, attempts = 0 WHERE key = ? AND version = ?",
+      this.now() + delayMs,
       job.key,
       job.version,
     );
-  }
-
-  /** Suspended conversation jobs need reconciliation even outside the ordinary activity window. */
-  wakeHeldJobs(): void {
-    this.sql.exec("UPDATE jobs SET suspended = 0, not_before = ? WHERE suspended = 2", this.now());
   }
 
   prune(): void {

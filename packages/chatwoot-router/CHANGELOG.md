@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Route each conversation in a Durable Object of its own, named `<account>:<conversation>`; one sweeper object
+  pages the accounts and hands each conversation to its object. This replaces 0.3.0's `Coordinator` class and
+  bounded RPC machinery; a slow Jev or Chatwoot request still delays only its own conversation.
+
+### Upgrade
+
+- Declare only the `Router` Durable Object (remove `Coordinator`).
+
 ## [0.3.0] - 2026-10-03
 
 ### Fixed

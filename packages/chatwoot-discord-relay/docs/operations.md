@@ -9,21 +9,45 @@ Conversations with activity within `reconcile.lookbackSeconds` get a post from t
 older ones get a post with their next message. A new post relays the conversation's whole
 history; its messages older than `reconcile.lookbackSeconds` notify no one (see
 [Pings and notifications](relay.md#pings-and-notifications)).
-To start with new messages only, use a verified committed boundary for
-`relay.startAfterMessageId`. Replacing an existing relay additionally requires the quiesced cut below.
+To start with new messages only, set `relay.startAfterMessageId` to the newest message id in
+Chatwoot when you install (for example the id in the newest conversation's `messages` from
+`GET /api/v1/accounts/<id>/conversations`).
 
 ## Cutover from an existing relay
 
-Follow the [adoption and rollback runbook](adoption.md). Repair and verify all old post links,
-prebuild the thread directory, and obtain a quiesced processed watermark and interaction fence.
-The owner must authorize the maintenance/cutover operation separately. Switching webhooks or
-choosing the newest message from one API page does not prove the old relay drained.
+If posts already exist (for example from another relay), the service must not open a second
+post for those conversations.
+
+1. Store each existing post URL in its conversation's `discord_thread` attribute
+   (`https://discord.com/channels/<guild id>/<thread id>`). A conversation without a mapping
+   adopts the linked post if it still exists in that account's forum.
+2. Set `relay.startAfterMessageId` to the last message id the other relay handled. Adopted posts
+   and new conversations only relay messages after it. (With `0`, adopted posts continue after
+   their latest message.)
+3. Stop the other relay, deploy this service, and point the Chatwoot webhooks at it. The sweep
+   catches up on anything changed in the meantime.
+
+## Upgrading from a version with one Hub (0.30.0 and earlier)
+
+Earlier versions kept every conversation in the Hub Durable Object. Deploy this version over it,
+with the same Worker name and the `Hub` class kept. Each conversation's own Durable Object takes
+over what the Hub recorded about it (its post, cursor, card, the Discord messages posted for each
+Chatwoot message, the latest draft, this hour's triage count) the first time it is used, and jobs
+left in the Hub's queue are handed to their conversations. Coming from 0.28.0 or earlier, first
+follow the 0.29.0 and 0.30.0 upgrade notes in the [changelog](../CHANGELOG.md): routing moved to
+chatwoot-router, so the relay's `routing` settings go, and routing jobs left in the Hub are dropped
+(the router's sweep routes pending conversations).
+
+Rolling back to the earlier version is safe only before this one handled anything: after that, the
+Hub no longer matches what was posted (the earlier version would post messages again or miss new
+posts). Once it has run, fix forward, or stop both and reconcile the posts before resuming.
 
 ## State and recovery
 
-All state (which post belongs to which conversation, how far each is relayed, the Discord ids
-of posted messages, the job queue) is in each Conversation Durable Object's SQLite database. Restore it,
-if it is lost or damaged, with Durable Objects'
+Each conversation's state (its post, how far it is relayed, the Discord ids of posted messages, its
+job queue) is in its own Durable Object's SQLite database; which conversation each post belongs to,
+the sweep's progress and the triage budget are in the Hub's. Restore them, if lost or damaged, with
+Durable Objects'
 [point-in-time recovery](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)
 (any point in the last 30 days).
 

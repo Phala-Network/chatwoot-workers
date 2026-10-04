@@ -1,5 +1,4 @@
 import { ConfigError } from "./config.ts";
-import { within } from "./deadline.ts";
 import { parseJson } from "./json.ts";
 
 export interface ConfigEnv {
@@ -26,7 +25,7 @@ async function readConfig(env: ConfigEnv): Promise<unknown> {
   if (env.CONFIG !== undefined) throw new ConfigError("Invalid CONFIG: set either CONFIG or CONFIG_KEY");
   if (!env.CONFIG_STORE) throw new ConfigError("Invalid CONFIG_KEY: requires the CONFIG_STORE KV namespace");
   // A key names one configuration and is never rewritten, so whichever copy KV returns is current.
-  const config = await within(env.CONFIG_STORE.get(env.CONFIG_KEY, "json"), AbortSignal.timeout(1500));
+  const config = await env.CONFIG_STORE.get(env.CONFIG_KEY, "json");
   if (config === null) throw new ConfigError("Invalid CONFIG_KEY: not in CONFIG_STORE");
   return config;
 }

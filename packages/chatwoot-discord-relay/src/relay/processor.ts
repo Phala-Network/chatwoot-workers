@@ -7,7 +7,6 @@ import {
   type ChatwootClient,
   type ChatwootConversation,
   type ChatwootMessage,
-  chatwootClient,
   isAnsweringReply,
   MESSAGE_PAGE_SIZE,
   toRelayConversation,
@@ -21,6 +20,7 @@ import { type DiscordRest, isInvalidRequest } from "../discord/rest.ts";
 import { fetchAvatarUrl } from "../discord/users.ts";
 import type { Store } from "../store.ts";
 import { mentionedUserIds } from "./format.ts";
+import { FINISH_REQUESTS, PAGE_REQUESTS, requestsPerMessage } from "./limits.ts";
 import { type ForumClient, Relay, type RelayOptions, type RelayStore } from "./relay.ts";
 import { relayDerived } from "./updates.ts";
 
@@ -29,16 +29,13 @@ const AVATAR_CACHE_MS = 24 * 60 * 60 * 1000;
 /** After a failed avatar lookup, the agent's Chatwoot avatar is used this long before trying again. */
 const AVATAR_RETRY_MS = 60 * 60 * 1000;
 
+/** What the conversations share: the hourly triage budget and which conversation each post belongs to. */
+export type Shared = Pick<RelayOptions, "reserveTriage" | "claimThread">;
+
 /** The relay as configured by `settings`. */
-export function relayFor(
-  settings: Settings,
-  forum: ForumClient,
-  store: RelayStore,
-  coordination: Pick<RelayOptions, "ensureThread" | "reserveTriage"> = {},
-): Relay {
+export function relayFor(settings: Settings, forum: ForumClient, store: RelayStore, shared: Shared = {}): Relay {
   const triageUserId = settings.config.triage.userId;
   return new Relay({
-    ...coordination,
     forum,
     store,
     frontendUrl: settings.frontendUrl,
@@ -57,6 +54,7 @@ export function relayFor(
     // Normally every message is relayed within the sweep's window (by its webhook, or else by
     // the sweep), so an older one is history: a first sync, or a catch-up after downtime.
     liveSeconds: settings.config.reconcile.lookbackSeconds,
+    ...shared,
   });
 }
 
@@ -68,7 +66,8 @@ export interface ProcessorContext {
   rest: DiscordRest;
   chatwoot: ChatwootClient;
   budget: Budget;
-  enqueueMetadata: (accountId: number, inboxId?: number, discordUserId?: string) => void;
+  /** See RelayOptions.claimThread. */
+  claimThread(accountId: number, conversationId: number, threadId: string): Promise<boolean>;
 }
 
 /** "yield" means the invocation's request budget ran low; run again in a fresh invocation. */
@@ -83,6 +82,7 @@ export async function processConversation(
   const account = settings.account(accountId);
   if (!account) return "done";
   const limits = settings.config.relay;
+  const perMessage = requestsPerMessage(limits.maxChunks);
 
   const raw = await chatwoot.getConversation(accountId, conversationId);
   if (!raw) {
@@ -92,9 +92,9 @@ export async function processConversation(
   }
   if (!relaysInbox(account, raw.inbox_id)) return "done";
   let conversation = toRelayConversation(conversationId, raw);
-  if (!store.conversation(accountId, conversationId)?.threadId) {
-    await recoverThread(context, accountId, account.forumChannelId, conversation);
-  }
+  const known = store.conversation(accountId, conversationId)?.threadId;
+  if (known) await context.claimThread(accountId, conversationId, known);
+  else await recoverThread(context, accountId, account.forumChannelId, conversation);
 
   const recorded = store.conversation(accountId, conversationId);
   let cursor = recorded?.cursor;
@@ -118,13 +118,14 @@ export async function processConversation(
 
   let inboxName: string | null | undefined;
   for (;;) {
-    if (budget.remaining < 8) return "yield";
-    budget.checkpoint();
-    const pageVersion = store.get(`answer-version:${accountId}:${conversationId}`);
+    if (budget.remaining < perMessage + PAGE_REQUESTS) return "yield";
     const page = await chatwoot.listMessages(accountId, conversationId, { after: cursor });
     for (const message of page) {
       if (message.id <= cursor) continue;
-      if (budget.remaining < 8) return "yield";
+      if (budget.remaining < perMessage) return "yield";
+      if (inboxName === undefined && !store.conversation(accountId, conversationId)?.threadId) {
+        inboxName = await cachedInboxName(context, accountId, raw);
+      }
       let answered = false;
       if (
         message.message_type === 0 &&
@@ -136,7 +137,6 @@ export async function processConversation(
         if (!fresh) return "done";
         if (!relaysInbox(account, fresh.inbox_id)) return "done";
         conversation = toRelayConversation(conversationId, fresh);
-        relay.customerEvent(accountId, conversationId, `message:${message.id}`);
         if (
           fresh.status === "pending" &&
           fresh.inbox_id !== undefined &&
@@ -155,36 +155,24 @@ export async function processConversation(
         ) {
           const reply =
             page.some((later) => later.id > message.id && isAnsweringReply(later)) ||
-            (page.length < MESSAGE_PAGE_SIZE &&
-            store.get(`answer-scan:${accountId}:${conversationId}:${message.id}`) === undefined
-              ? false
-              : await answeringReply(context, accountId, conversationId, message.id));
+            (await answeringReply(context, accountId, conversationId, message.id));
           if (reply === "yield") return "yield";
           answered = reply;
         }
       }
-      if (inboxName === undefined && !store.conversation(accountId, conversationId)?.threadId) {
-        inboxName = cachedInboxName(context, accountId, raw);
-      }
-      if (store.get(`answer-version:${accountId}:${conversationId}`) !== pageVersion) return "yield";
-      budget.checkpoint();
-      if (budget.remaining < 8) return "yield";
+      if (budget.remaining < perMessage) return "yield";
       const scanKey = `answer-scan:${accountId}:${conversationId}:${message.id}`;
       const scan = store.get(scanKey);
       const relayMessage = toRelayMessage(message, {
         account: { id: accountId, name: account.name },
         inboxName: inboxName ?? null,
         conversation,
-        ...linkedAgents(context, message, accountId),
+        ...(await linkedAgents(context, message)),
       });
-      if (
-        store.get(`answer-version:${accountId}:${conversationId}`) !== pageVersion ||
-        (scan !== undefined && store.get(scanKey) !== scan)
-      )
-        return "yield";
+      if (scan !== undefined && store.get(scanKey) !== scan) return "yield";
       relayMessage.answered = answered;
       try {
-        if ((await relay.relay(relayMessage)) === false) return "pending";
+        await relay.relay(relayMessage);
         // With its current state: an update reported before the message was relayed is not lost.
         await relayDerived(context, accountId, conversation, message);
       } catch (error) {
@@ -207,7 +195,6 @@ export async function processConversation(
             accountId,
             conversation,
             `⚠️ Chatwoot message ${message.id} could not be relayed. Check it in Chatwoot.`,
-            `failed:${message.id}`,
           );
         } catch (noticeError) {
           if (noticeError instanceof BudgetExhaustedError) return "yield";
@@ -224,7 +211,7 @@ export async function processConversation(
   const post = store.conversation(accountId, conversationId);
   const threadId = post?.threadId;
   if (threadId) {
-    if (budget.remaining < 8) return "yield";
+    if (budget.remaining < FINISH_REQUESTS) return "yield";
     if (post?.announcePending) await relay.announceAssignee(accountId, conversation);
     await relay.sync(accountId, conversation, threadId);
     await linkPost(context, accountId, account.forumChannelId, conversation, threadId);
@@ -262,7 +249,7 @@ async function answeringReply(
  * account's forum and is not mapped to another conversation.
  */
 async function recoverThread(
-  { settings, store, forum, relay }: ProcessorContext,
+  { settings, store, forum, claimThread }: ProcessorContext,
   accountId: number,
   forumChannelId: string,
   conversation: RelayConversation,
@@ -270,9 +257,8 @@ async function recoverThread(
   const attribute = settings.config.relay.linkAttribute;
   if (!attribute) return;
   const threadId = threadIdFromUrl(conversation.customAttributes[attribute]);
-  if (!threadId || store.ticketForThread(threadId)) return;
-  if (!(await forum.threadExists(forumChannelId, threadId))) return;
-  await relay.ensureThread(accountId, conversation.id, threadId);
+  if (!threadId || !(await forum.threadExists(forumChannelId, threadId))) return;
+  if (!(await claimThread(accountId, conversation.id, threadId))) return;
   store.adoptThread(accountId, conversation.id, threadId);
   log.info("recovered post from conversation link", { accountId, conversationId: conversation.id, threadId });
 }
@@ -298,27 +284,40 @@ async function linkPost(
 }
 
 /** The thread id in a https://discord.com/channels/<guild>/<thread> link. */
-export function threadIdFromUrl(value: unknown): string | undefined {
+function threadIdFromUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   return /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/channels\/\d{17,20}\/(\d{17,20})\/?$/.exec(
     value.trim(),
   )?.[1];
 }
 
+/** The newest message id Chatwoot included with a conversation, if any. */
+export function latestMessageId(conversation: ChatwootConversation): number | undefined {
+  const ids = (conversation.messages ?? []).flatMap((message) => (message.id === undefined ? [] : [message.id]));
+  return ids.length === 0 ? undefined : Math.max(...ids);
+}
+
 /** The inbox name for a new post's ticket header; omitted when Chatwoot will not say. */
-function cachedInboxName(
-  context: ProcessorContext,
+async function cachedInboxName(
+  { store, chatwoot }: ProcessorContext,
   accountId: number,
   conversation: ChatwootConversation,
-): string | null {
-  const { store, enqueueMetadata } = context;
+): Promise<string | null> {
   const inboxId = conversation.inbox_id;
   if (!inboxId) return null;
   const key = `inbox:${accountId}:${inboxId}`;
   const cached = store.get(key);
-  if (cached !== undefined) return cached || null;
-  enqueueMetadata(accountId, inboxId);
-  return null;
+  if (cached !== undefined) return cached;
+  try {
+    const name = await chatwoot.inboxName(accountId, inboxId);
+    if (name === undefined) return null;
+    store.set(key, name, INBOX_CACHE_MS);
+    return name;
+  } catch (error) {
+    if (error instanceof BudgetExhaustedError) throw error;
+    log.warn("inbox name unavailable", { accountId, inboxId, ...errorFields(error) });
+    return null;
+  }
 }
 
 /**
@@ -327,11 +326,10 @@ function cachedInboxName(
  * agents among them by Chatwoot user id; for a message sent by a linked agent, their Discord
  * avatar.
  */
-function linkedAgents(
+async function linkedAgents(
   context: ProcessorContext,
   message: ChatwootMessage,
-  accountId: number,
-): { mentionedAgents?: ReadonlyMap<number, string>; discordAvatarUrl?: string } {
+): Promise<{ mentionedAgents?: ReadonlyMap<number, string>; discordAvatarUrl?: string }> {
   const mentioned = message.private && message.content ? mentionedUserIds(message.content) : [];
   const senderId = message.message_type === 1 && message.sender?.type === "user" ? message.sender.id : undefined;
   const linked = new Map<number, string>();
@@ -340,7 +338,7 @@ function linkedAgents(
     if (discordId) linked.set(userId, discordId);
   }
   const senderDiscordId = context.settings.linkedAgent(senderId)?.discordUserId;
-  const discordAvatarUrl = senderDiscordId ? cachedDiscordAvatar(context, senderDiscordId, accountId) : undefined;
+  const discordAvatarUrl = senderDiscordId ? await cachedDiscordAvatar(context, senderDiscordId) : undefined;
   return {
     ...(mentioned.length > 0 ? { mentionedAgents: linked } : {}),
     ...(discordAvatarUrl ? { discordAvatarUrl } : {}),
@@ -351,42 +349,21 @@ function linkedAgents(
  * A linked agent's Discord avatar, looked up at most once a day; undefined when Discord will
  * not say, and then not asked again for a while.
  */
-function cachedDiscordAvatar(context: ProcessorContext, discordUserId: string, accountId: number): string | undefined {
-  const { store, enqueueMetadata } = context;
+async function cachedDiscordAvatar(
+  { store, rest }: ProcessorContext,
+  discordUserId: string,
+): Promise<string | undefined> {
   const key = `avatar:${discordUserId}`;
   const cached = store.get(key);
   if (cached !== undefined) return cached || undefined;
-  enqueueMetadata(accountId, undefined, discordUserId);
-  return undefined;
-}
-
-export async function refreshMetadata(
-  context: ProcessorContext,
-  payload: { accountId: number; inboxId?: number | undefined; discordUserId?: string | undefined },
-): Promise<void> {
-  const { store, rest } = context;
-  if (payload.inboxId) {
-    const key = `inbox:${payload.accountId}:${payload.inboxId}`;
-    try {
-      const name = await chatwootClient(
-        context.settings.config.chatwoot.baseUrl,
-        context.settings.secrets.CHATWOOT_RELAY_TOKEN,
-        context.budget.fetchWith(300),
-        store,
-      ).inboxName(payload.accountId, payload.inboxId);
-      store.set(key, name ?? "", name ? INBOX_CACHE_MS : 60_000);
-    } catch (error) {
-      if (error instanceof BudgetExhaustedError) throw error;
-      store.set(key, "", 60_000);
-    }
-  }
-  if (payload.discordUserId) {
-    const key = `avatar:${payload.discordUserId}`;
-    try {
-      store.set(key, await fetchAvatarUrl(rest, payload.discordUserId, AbortSignal.timeout(300)), AVATAR_CACHE_MS);
-    } catch (error) {
-      if (error instanceof BudgetExhaustedError) throw error;
-      store.set(key, "", AVATAR_RETRY_MS);
-    }
+  try {
+    const url = await fetchAvatarUrl(rest, discordUserId);
+    store.set(key, url, AVATAR_CACHE_MS);
+    return url;
+  } catch (error) {
+    if (error instanceof BudgetExhaustedError) throw error;
+    log.warn("Discord avatar unavailable", { discordUserId, ...errorFields(error) });
+    store.set(key, "", AVATAR_RETRY_MS);
+    return undefined;
   }
 }

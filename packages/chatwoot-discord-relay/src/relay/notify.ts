@@ -24,15 +24,17 @@ interface NotifierOptions {
   /** A message created longer ago than this is history. */
   liveSeconds: number;
   now: () => Date;
-  reserveTriage?: ((hour: string, key: string, limit: number) => Promise<boolean>) | undefined;
+  /**
+   * Counts a customer message `event` against the hourly budget shared by every conversation, once per event;
+   * false when the budget of `hour` is used up. Unset: counted in `store`.
+   */
+  reserveTriage?: ((hour: string, event: string) => Promise<boolean>) | undefined;
 }
 
 interface Notification {
   lines: string[];
   /** Users the lines may ping. */
   users: string[];
-  triageExpiresAt?: number;
-  withoutTriage?: string[];
 }
 
 /** Who a post announces as its assignee: their Chatwoot user id, which a rename does not change; "" for none. */
@@ -69,13 +71,7 @@ export class Notifier {
       (line) => line !== undefined,
     );
     // The triage mention stays a literal token: only the assignee may be pinged.
-    return {
-      lines,
-      users: assignee ? [assignee] : [],
-      ...(triage.expiresAt === undefined
-        ? {}
-        : { triageExpiresAt: triage.expiresAt, withoutTriage: assignee ? [`-# <@${assignee}>`] : [] }),
-    };
+    return { lines, users: assignee ? [assignee] : [] };
   }
 
   /**
@@ -106,38 +102,33 @@ export class Notifier {
    * The triage bot mention for a customer message, or a note when a routing kind handled
    * it or the bot's hourly budget is used up.
    */
-  private async triage(message: RelayMessage): Promise<{ mention?: string; note?: string; expiresAt?: number }> {
+  private async triage(message: RelayMessage): Promise<{ mention?: string; note?: string }> {
     const { triage, store } = this.options;
     if (!fromCustomer(message)) return {};
     if (!triage) return {};
     const { account, conversation } = message;
     // Decided and counted once per message: a retry after a failed post repeats the decision.
-    const event = `triage:${account.id}:${conversation.id}:${message.id}`;
-    let decision = store.get(event);
-    if (decision === undefined) {
+    const decision = store.once(`triage:${account.id}:${message.id}`, () => {
+      if (conversation.status !== "open" || message.answered) return "answered";
       const hour = this.options.now().toISOString().slice(0, 13);
-      if (conversation.status !== "open" || message.answered) decision = "answered";
-      else if (store.increment(`triage:${account.id}:${conversation.id}:${hour}`) > triage.perConversationPerHour)
-        decision = "conversation";
-      else {
-        // Persist fail-closed before RPC: a lost grant is never retried under another key.
-        store.set(event, "hour");
-        try {
-          const granted = this.options.reserveTriage
-            ? await this.options.reserveTriage(hour, event, triage.perHour)
-            : store.increment(`triage:${hour}`) <= triage.perHour;
-          decision = granted ? `mention:${hour}` : "hour";
-        } catch {
-          decision = "hour";
-        }
-      }
-      store.set(event, decision);
-    }
+      const key = `${message.account.id}:${message.conversation.id}`;
+      if (store.increment(`triage:${key}:${hour}`) > triage.perConversationPerHour) return "conversation";
+      return `hour:${hour}`;
+    });
     if (decision === "answered") return { note: handledNote(triage) };
     if (decision === "conversation") return { note: conversationBudgetNote(triage) };
+    // Decided by an earlier version, which counted the hourly budget in its own store.
     if (decision === "hour") return { note: hourlyBudgetNote(triage) };
-    if (!decision.startsWith("mention:")) return {};
-    return { mention: triage.userId, expiresAt: Date.parse(`${decision.slice(8)}:00:00Z`) + 3600000 };
+    if (decision === "mention") return { mention: triage.userId };
+    const hour = decision.slice("hour:".length);
+    const event = `${account.id}:${message.id}`;
+    const reserve =
+      this.options.reserveTriage ??
+      (async () =>
+        store.once(`triage-hour:${event}`, () => (store.increment(`triage:${hour}`) <= triage.perHour ? "1" : "")) ===
+        "1");
+    if (!(await reserve(hour, event))) return { note: hourlyBudgetNote(triage) };
+    return { mention: triage.userId };
   }
 
   /** The linked Discord user of the conversation's assignee, if any. */

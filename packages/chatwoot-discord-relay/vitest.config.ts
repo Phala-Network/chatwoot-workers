@@ -12,8 +12,6 @@ export default defineConfig({
   test: {
     // Structured logs from passing tests are noise; failures still print theirs.
     silent: "passed-only",
-    // Real dispatch-latency measurements must not compete with another file's Workers runtime.
-    fileParallelism: false,
     setupFiles: ["./test/setup.ts"],
     // discord-api-types ships CommonJS that re-exports through helpers the Workers pool cannot
     // follow (its enums come through empty). Pre-bundle it to ESM, as the build does.
@@ -28,14 +26,8 @@ export default defineConfig({
         // Required by @cloudflare/vitest-pool-workers (the Worker itself does not need it).
         compatibilityFlags: ["nodejs_compat"],
         durableObjects: {
-          LEGACY_HUB: { className: "Hub", useSQLite: true },
+          HUB: { className: "Hub", useSQLite: true },
           CONVERSATION: { className: "Conversation", useSQLite: true },
-          THREAD_DIRECTORY: { className: "ThreadDirectory", useSQLite: true },
-          TRIAGE_BUDGET: { className: "TriageBudget", useSQLite: true },
-          FORUM_REGISTRY: { className: "ForumRegistry", useSQLite: true },
-          ACCOUNT_SWEEP: { className: "AccountSweep", useSQLite: true },
-          QUEUE_DIGEST: { className: "QueueDigest", useSQLite: true },
-          DISCORD_RATE_LIMIT: { className: "DiscordRateLimit", useSQLite: true },
         },
         kvNamespaces: ["CONFIG_STORE"],
         bindings: {

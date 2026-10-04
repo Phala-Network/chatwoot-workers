@@ -4,7 +4,7 @@
 
 import { QueueStore } from "../../../shared/store.ts";
 import type { Cache } from "./discord/forum.ts";
-import type { PostFields, RelayStore } from "./relay/relay.ts";
+import { type PostFields, type RelayStore, unknownCards } from "./relay/relay.ts";
 
 const MIGRATIONS: string[] = [
   `CREATE TABLE conversations (
@@ -89,7 +89,6 @@ const MIGRATIONS: string[] = [
    ALTER TABLE conversations ADD COLUMN answer_id TEXT;
    ALTER TABLE conversations ADD COLUMN answer_source_id TEXT;
    ALTER TABLE conversations ADD COLUMN customer_message_id TEXT;`,
-  `ALTER TABLE conversations ADD COLUMN assignee_notice_id TEXT;`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;
@@ -109,7 +108,6 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
   ["state", "state"],
   ["cursor", "cursor"],
   ["announcedAssignee", "announced_assignee"],
-  ["assigneeNoticeId", "assignee_notice_id"],
   ["announcePending", "announce_pending"],
   ["titleSubject", "title_subject"],
   ["title", "title"],
@@ -123,59 +121,24 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
 
 export type { Job } from "../../../shared/store.ts";
 
+export interface ConversationExport {
+  row: Record<string, SqlStorageValue>;
+  posted: Record<string, SqlStorageValue>[];
+  derived: Record<string, SqlStorageValue>[];
+  responses: Record<string, SqlStorageValue>[];
+  /** The conversation's hourly triage counts. */
+  counters: Record<string, SqlStorageValue>[];
+  decisions: Record<string, SqlStorageValue>[];
+  draft?: { answerId: string; text: string };
+}
+
 export class Store extends QueueStore implements RelayStore, Cache {
   /** A changed reply can qualify even on an already-scanned page. No notification was decided yet. */
   invalidateAnswerScans(accountId: number, conversationId: number): boolean {
-    const key = `answer-version:${accountId}:${conversationId}`;
-    this.set(key, String(Number(this.get(key) ?? 0) + 1), 24 * 60 * 60 * 1000);
     return (
       this.sql.exec("DELETE FROM cache WHERE key LIKE ?", `answer-scan:${accountId}:${conversationId}:%`).rowsWritten >
       0
     );
-  }
-
-  commandFile(interactionId: string, part: number, type: string): Blob | undefined {
-    if (
-      this.sql
-        .exec("SELECT 1 FROM command_files WHERE interaction_id = ? AND part = ? AND chunk = -1", interactionId, part)
-        .toArray().length === 0
-    )
-      return;
-    const chunks: Blob[] = [];
-    for (const row of this.sql.exec<{ bytes: ArrayBuffer }>(
-      "SELECT bytes FROM command_files WHERE interaction_id = ? AND part = ? AND chunk >= 0 ORDER BY chunk",
-      interactionId,
-      part,
-    ))
-      chunks.push(new Blob([row.bytes]));
-    return new Blob(chunks, { type });
-  }
-
-  async saveCommandFile(interactionId: string, part: number, blob: Blob): Promise<void> {
-    this.sql.exec("DELETE FROM command_files WHERE interaction_id = ? AND part = ?", interactionId, part);
-    const size = 64 * 1024;
-    for (let offset = 0; offset < blob.size; offset += size) {
-      const bytes = await blob.slice(offset, offset + size).arrayBuffer();
-      this.sql.exec(
-        "INSERT INTO command_files VALUES (?, ?, ?, ?, ?)",
-        interactionId,
-        part,
-        offset / size,
-        bytes,
-        this.now(),
-      );
-    }
-    this.sql.exec(
-      "INSERT INTO command_files VALUES (?, ?, -1, ?, ?)",
-      interactionId,
-      part,
-      new ArrayBuffer(0),
-      this.now(),
-    );
-  }
-
-  clearCommandFiles(interactionId: string): void {
-    this.sql.exec("DELETE FROM command_files WHERE interaction_id = ?", interactionId);
   }
 
   override migrate(): void {
@@ -188,9 +151,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
       this.sql.exec("UPDATE schema_version SET version = ?", version + 1);
     }
     super.migrate();
-    this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS command_files (interaction_id TEXT NOT NULL, part INTEGER NOT NULL, chunk INTEGER NOT NULL, bytes BLOB NOT NULL, received_at INTEGER NOT NULL, PRIMARY KEY (interaction_id, part, chunk))",
-    );
   }
 
   // Conversations
@@ -202,7 +162,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
         state: string | null;
         cursor: number | null;
         announced_assignee: string | null;
-        assignee_notice_id: string | null;
         announce_pending: number | null;
         title_subject: string | null;
         title: string | null;
@@ -225,7 +184,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
       state: row.state ?? undefined,
       cursor: row.cursor ?? undefined,
       announcedAssignee: row.announced_assignee ?? undefined,
-      assigneeNoticeId: row.assignee_notice_id ?? undefined,
       announcePending: row.announce_pending ?? undefined,
       titleSubject: row.title_subject ?? undefined,
       title: row.title ?? undefined,
@@ -262,6 +220,32 @@ export class Store extends QueueStore implements RelayStore, Cache {
     return row ? { accountId: row.account_id, conversationId: row.conversation_id } : undefined;
   }
 
+  /**
+   * Up to `limit` of the account's posts an earlier version relayed (they have a cursor; posts only
+   * registered by Hub.claimThread have none) that have no card, whose ticket was not resolved when
+   * last synced (`state` is Relay.stateOf, which starts with the status), and that were not taken
+   * in the last `retryMs`, nor handed over to the conversation's own object; each is taken (see Hub.backfillCards).
+   */
+  takePostsWithoutCard(accountId: number, limit: number, retryMs: number): number[] {
+    const ids = this.sql
+      .exec<{ conversation_id: number }>(
+        `SELECT c.conversation_id FROM conversations c
+         LEFT JOIN cache taken ON taken.key = 'card-backfill:' || c.account_id || ':' || c.conversation_id
+           AND (taken.expires_at IS NULL OR taken.expires_at > ?)
+         WHERE c.account_id = ? AND c.thread_id IS NOT NULL AND c.cursor IS NOT NULL AND c.card_id IS NULL
+           AND taken.key IS NULL
+           AND (c.state IS NULL OR c.state NOT LIKE '["resolved"%')
+         ORDER BY c.conversation_id DESC LIMIT ?`,
+        this.now(),
+        accountId,
+        limit,
+      )
+      .toArray()
+      .map((row) => row.conversation_id);
+    for (const id of ids) this.set(`card-backfill:${accountId}:${id}`, "1", retryMs);
+    return ids;
+  }
+
   setCursor(accountId: number, conversationId: number, cursor: number): void {
     this.ensureRow(accountId, conversationId);
     this.sql.exec(
@@ -290,16 +274,63 @@ export class Store extends QueueStore implements RelayStore, Cache {
 
   /** Maps a conversation to an existing post that no other conversation is mapped to. */
   adoptThread(accountId: number, conversationId: number, threadId: string): void {
+    // The adopted post may hold cards anywhere: they are looked for before one is posted.
     this.sql.exec(
-      `INSERT INTO conversations (account_id, conversation_id, thread_id) VALUES (?, ?, ?)
+      `INSERT INTO conversations (account_id, conversation_id, thread_id, card_id) VALUES (?, ?, ?, ?)
        ON CONFLICT (account_id, conversation_id) DO UPDATE SET thread_id = excluded.thread_id, state = NULL,
-         announced_assignee = NULL, assignee_notice_id = NULL, announce_pending = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
-         card_id = NULL, card_covered = NULL, answer_id = NULL, answer_source_id = NULL,
+         announced_assignee = NULL, announce_pending = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
+         card_id = excluded.card_id, card_covered = NULL, answer_id = NULL, answer_source_id = NULL,
          customer_message_id = NULL`,
       accountId,
       conversationId,
       threadId,
+      unknownCards(threadId),
     );
+  }
+
+  /**
+   * Everything recorded about one conversation: its row and the Discord messages posted for it. The
+   * single Hub of earlier versions hands each conversation over to its own Durable Object with this.
+   */
+  exportConversation(accountId: number, conversationId: number): ConversationExport | undefined {
+    const where = "WHERE account_id = ? AND conversation_id = ?";
+    const rows = (table: string) =>
+      this.sql.exec(`SELECT * FROM ${table} ${where}`, accountId, conversationId).toArray();
+    const [row] = rows("conversations");
+    if (!row) return undefined;
+    const answerId = typeof row.answer_id === "string" ? row.answer_id : undefined;
+    const draft = answerId === undefined ? undefined : this.get(`answer:${answerId}`);
+    return {
+      row,
+      posted: rows("posted_messages"),
+      derived: rows("derived_messages"),
+      responses: rows("submitted_responses"),
+      counters: this.sql
+        .exec("SELECT * FROM counters WHERE name LIKE ?", `triage:${accountId}:${conversationId}:%`)
+        .toArray(),
+      // Triage decisions of the last hours, keyed by message (Notifier): the account's, as a message's
+      // conversation is not recorded. Each is kept: a message not yet relayed keeps its decision.
+      decisions: this.sql.exec("SELECT * FROM cache WHERE key LIKE ?", `triage:${accountId}:%`).toArray(),
+      ...(answerId !== undefined && draft !== undefined ? { draft: { answerId, text: draft } } : {}),
+    };
+  }
+
+  /** Records a conversation handed over by exportConversation (in a store that has none of it yet). */
+  importConversation(data: ConversationExport, draftTtlMs: number): void {
+    const insert = (table: string, row: Record<string, SqlStorageValue>) => {
+      const columns = Object.keys(row);
+      this.sql.exec(
+        `INSERT OR REPLACE INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+        ...columns.map((column) => row[column] ?? null),
+      );
+    };
+    insert("conversations", data.row);
+    for (const row of data.posted) insert("posted_messages", row);
+    for (const row of data.derived) insert("derived_messages", row);
+    for (const row of data.responses) insert("submitted_responses", row);
+    for (const row of data.counters) insert("counters", row);
+    for (const row of data.decisions) insert("cache", row);
+    if (data.draft) this.set(`answer:${data.draft.answerId}`, data.draft.text, draftTtlMs);
   }
 
   // RelayStore
@@ -376,18 +407,8 @@ export class Store extends QueueStore implements RelayStore, Cache {
   }
 
   forgetThread(accountId: number, conversationId: number): void {
-    const threadId = this.conversation(accountId, conversationId)?.threadId;
-    if (threadId) {
-      this.set(
-        "directory:tombstone",
-        JSON.stringify({ threadId, owner: JSON.parse(this.get("directory:owner") ?? "null") }),
-      );
-      this.set("generation", String(Number(this.get("generation") ?? 1) + 1));
-      this.delete("directory:thread");
-      this.delete("directory:owner");
-    }
     this.sql.exec(
-      `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, assignee_notice_id = NULL, announce_pending = NULL,
+      `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, announce_pending = NULL,
          title_subject = NULL, title = NULL, title_message_id = NULL, card_id = NULL, card_covered = NULL, answer_id = NULL,
          answer_source_id = NULL, customer_message_id = NULL
        WHERE account_id = ? AND conversation_id = ?`,
@@ -480,7 +501,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
   override prune(): void {
     super.prune();
     const now = this.now();
-    this.sql.exec("DELETE FROM command_files WHERE received_at <= ?", now - INTERACTION_TTL_MS);
     this.sql.exec("DELETE FROM counters WHERE expires_at <= ?", now);
     this.sql.exec("DELETE FROM interactions WHERE received_at <= ?", now - INTERACTION_TTL_MS);
   }
