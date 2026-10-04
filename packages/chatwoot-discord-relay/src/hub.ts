@@ -241,17 +241,8 @@ export class Hub extends DurableObject<Env> {
     }
   }
 
-  /**
-   * A conversation's job, queued here by an earlier version or by the sweep, given to its
-   * conversation's object, which from then on also gives its post a card (see backfillCards).
-   */
+  /** A conversation's job, queued here by an earlier version or by the sweep, given to its conversation's object. */
   private async handOver(job: Job, payload: Exclude<JobPayload, { type: "sweep" | "queue" }>): Promise<void> {
-    const ticket = payload.type === "command" ? payload.job : payload;
-    await this.handOverJob(job, payload);
-    this.store.set(`card-backfill:${ticket.accountId}:${ticket.conversationId}`, "1");
-  }
-
-  private async handOverJob(job: Job, payload: Exclude<JobPayload, { type: "sweep" | "queue" }>): Promise<void> {
     if (payload.type === "command") {
       const command: CommandJob = payload.job;
       await conversationStub(this.env, command.accountId, command.conversationId).enqueueCommand(
@@ -276,6 +267,8 @@ export class Hub extends DurableObject<Env> {
       }
     }
     await stub.enqueueConversation(accountId, conversationId);
+    // Its sync gives the post a card when it has none: the post needs no backfill any more.
+    this.store.set(`card-backfill:${accountId}:${conversationId}`, "1");
   }
 
   /**

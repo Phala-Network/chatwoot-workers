@@ -1493,7 +1493,7 @@ describe("worker", () => {
     const customer = world.webhookPosts().find((post) => String(post.body.content).startsWith("A customer request"));
     expect(customer?.body.content).toContain("handled automatically");
     expect(customer?.body.content).not.toContain("<@100000000000000777>");
-  });
+  }, 15000); // 300 messages to page through.
 
   it("relays a message a kind's reply answered after routing, without calling the triage bot", async () => {
     const globex = "chatwoot.example.com/api/v1/accounts/1";
