@@ -66,10 +66,15 @@ with fictional data.*
 ## How it works
 
 ```
-Chatwoot ──webhook──▶ Worker ──▶ Hub Durable Object ──▶ Discord forum post (via webhook)
-Discord ─/command───▶ Worker ──▶ Hub Durable Object ──▶ Chatwoot REST API (as that agent)
-Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: catch up messages and conversation state
+Chatwoot ──webhook──▶ Worker ──▶ Conversation Durable Object ──▶ Discord forum post (via webhook)
+Discord ─/command───▶ Worker ──▶ Conversation Durable Object ──▶ Chatwoot REST API (as that agent)
+Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: hands missed conversations to their objects
 ```
+
+Each conversation has its own Durable Object, so one slow conversation never delays another, and a
+command runs at once instead of waiting behind background work. The Hub only knows which
+conversation each post belongs to, counts the triage bot's hourly budget, and runs the sweep and
+the support queue.
 
 - Each conversation gets one forum post, titled `[<Account> #<id>] <customer> — <subject or first message>`.
   It opens with a ticket header (channel, inbox, customer email, phone number on phone channels,
@@ -147,8 +152,9 @@ Design choices:
   visible note replaces the mention, as it does on a customer message a routing kind's reply
   already answered. Messages from blocked contacts are never relayed.
 - **Reliable by construction.** Chatwoot sends each webhook once, without retry, so webhooks are
-  only triggers: the Worker queues the work durably in one Durable Object, which reads Chatwoot's
-  API, retries failed work until it succeeds, and sweeps every 5 minutes for missed messages and conversation state
+  only triggers: the Worker queues the work durably in the conversation's Durable Object, which reads
+  Chatwoot's API and retries failed work until it succeeds; a sweep every 5 minutes finds missed messages and
+  conversation state
   ([Internals](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/internals.md) says what the sweep does not cover).
 
 ## Deploy
@@ -220,7 +226,7 @@ npx cf deploy --secrets-file <secrets file>
 [`chatwoot-discord-relay`](https://www.npmjs.com/package/chatwoot-discord-relay) package,
 published from this repository's releases with npm provenance, at an exact version. Your project
 needs `cf`, `vite`, and `@cloudflare/vite-plugin` as dev dependencies, a `vite.config.ts` like this
-repository's, `src/index.ts` with `export { default, Hub } from "chatwoot-discord-relay";`, the
+repository's, `src/index.ts` with `export { Conversation, default, Hub } from "chatwoot-discord-relay";`, the
 configuration as JSON with comments in a file of its own (`config.jsonc`), and a
 `cloudflare.config.ts` that binds a [KV namespace](https://developers.cloudflare.com/kv/) and the
 configuration's key instead of `CONFIG`:
@@ -237,9 +243,13 @@ export default defineConfig({
     compatibilityDate: "2026-08-15",
     domains: ["<worker host>"],
     triggers: [triggers.scheduled({ schedule: "*/5 * * * *" })],
-    exports: { Hub: exports.durableObject({ storage: "sqlite" }) },
+    exports: {
+      Hub: exports.durableObject({ storage: "sqlite" }),
+      Conversation: exports.durableObject({ storage: "sqlite" }),
+    },
     env: {
       HUB: bindings.durableObject({ worker: "chatwoot-discord-relay", exportName: "Hub" }),
+      CONVERSATION: bindings.durableObject({ worker: "chatwoot-discord-relay", exportName: "Conversation" }),
       CONFIG_STORE: bindings.kv({ id: "<namespace id>" }),
       CONFIG_KEY: bindings.text(storedConfig(new URL("config.jsonc", import.meta.url)).key),
     },
@@ -437,7 +447,8 @@ kind endings release the bot in the same turn, preserving status. Confirm cleare
 then stop router entry, cron,
 queued alarms and in-flight work, retaining its DO namespace/storage (reply attempts/observed records and turn
 guards cannot be rebuilt from history). Restore the recorded live relay 0.27 version and CONFIG_KEY with its
-original Hub. Its `kind-reply:<account>:<conversation>` ledger is independent of the Router's
+original Hub (see [Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md) for
+what changed in it since). Its `kind-reply:<account>:<conversation>` ledger is independent of the Router's
 `reply:<account>:<conversation>` ledger: version/config rollback transfers no records and does not guarantee
 reply-once for Router-only replies or unknown attempts. Retain both DOs and review/isolate those tickets before
 resuming old routing. The relay sweep releases held jobs after disconnect. See the

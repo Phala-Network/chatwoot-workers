@@ -18,6 +18,8 @@ may point to another deployment of that API, for example a proxy or gateway.
   must see every routed inbox. Disconnecting an inbox stops classification/replies and hands any pending ticket still assigned to this bot to people. The API does not expose whether the
   association is inactive; disconnect to disable it. `routing.botIds` and both bot credential maps require
   exactly the routed account keys (see [Configuration reference](#configuration-reference)).
+- Each conversation is routed by a `Router` Durable Object of its own, so a slow Jev or Chatwoot request for one
+  conversation never delays another; one more `Router` object runs the sweep.
 - Signed bot webhooks at `/chatwoot/agent-bot` enqueue a deduplicated conversation job. The five-minute sweep
   lists only **pending and open conversations in the account**, including disconnected inboxes, without an age
   cutoff. Pending tickets route or hand off; open tickets still assigned to the brand bot release that assignment

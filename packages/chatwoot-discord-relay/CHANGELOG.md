@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace 0.31.0's partition with one Durable Object per conversation and the Hub. Each conversation's object
+  owns its post, receipts, cursor, card, drafts and queue, so one slow conversation never delays another.
+  Commands run at once in their conversation's object instead of queuing; the post's card follows right after.
+  The Hub only maps posts to conversations, counts the triage bot's hourly budget, and runs the sweep and the
+  support queue.
+- A customer message held during an inbox bot's turn is read again every five minutes, and a status change
+  releases it at once.
+
+### Removed
+
+- The 0.31.0 partition classes, the operator entry point and its adoption runbook, and the `cutover` settings.
+
+### Upgrade
+
+- From 0.30.0 or earlier (one Hub): deploy over it with the same Worker name, keeping the `Hub` class and adding
+  `Conversation` (`exports.durableObject({ storage: "sqlite" })`, bound as `CONVERSATION`); export both from
+  your entry point. Each conversation takes over what the Hub recorded about it on first use: posts, receipts
+  (deleting an older message in Chatwoot still deletes its Discord copy), cards and drafts carry over. See
+  [Operations](docs/operations.md).
+- 0.31.0 was not meant to be deployed over a Hub without its adoption runbook; this release replaces it.
+
 ## [0.31.0] - 2026-10-03
 
 ### Changed

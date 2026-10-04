@@ -27,11 +27,22 @@ post for those conversations.
 3. Stop the other relay, deploy this service, and point the Chatwoot webhooks at it. The sweep
    catches up on anything changed in the meantime.
 
+## Upgrading from a version with one Hub (0.30.0 and earlier)
+
+Earlier versions kept every conversation in the Hub Durable Object. Deploy this version over it,
+with the same Worker name and the `Hub` class kept: nothing else is needed. Each conversation's
+own Durable Object takes over what the Hub recorded about it (its post, cursor, card, the Discord
+messages posted for each Chatwoot message, the latest draft) the first time it is used, and jobs
+left in the Hub's queue are handed to their conversations. The Hub keeps its copy, so a rollback to
+the earlier version finds its state as it was at the upgrade; posts and messages created after the
+upgrade are then unknown to it, so roll back only right after an upgrade that went wrong.
+
 ## State and recovery
 
-All state (which post belongs to which conversation, how far each is relayed, the Discord ids
-of posted messages, the job queue) is in the Hub Durable Object's SQLite database. Restore it,
-if it is lost or damaged, with Durable Objects'
+Each conversation's state (its post, how far it is relayed, the Discord ids of posted messages, its
+job queue) is in its own Durable Object's SQLite database; which conversation each post belongs to,
+the sweep's progress and the triage budget are in the Hub's. Restore them, if lost or damaged, with
+Durable Objects'
 [point-in-time recovery](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)
 (any point in the last 30 days).
 
