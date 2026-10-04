@@ -1,6 +1,6 @@
 {
   "name": "chatwoot-router",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Route Chatwoot conversations with TypeSafe Jev on Cloudflare Workers.",
   "keywords": [
     "chatwoot",
