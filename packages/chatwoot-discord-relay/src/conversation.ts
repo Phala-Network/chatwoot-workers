@@ -24,7 +24,7 @@ import { errorFields, log } from "../../../shared/log.ts";
 import { retryDelay } from "../../../shared/store.ts";
 import { executeCommand } from "./commands/actions.ts";
 import { text } from "./commands/components.ts";
-import type { CommandJob } from "./commands/job.ts";
+import { type CommandJob, commandJobSchema } from "./commands/job.ts";
 import type { Settings } from "./config.ts";
 import { DiscordForum } from "./discord/forum.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
@@ -38,6 +38,8 @@ import { type Job, Store } from "./store.ts";
 
 const id = z.number().int().positive();
 const payloadSchema = z.discriminatedUnion("type", [
+  /** `queuedAt`: when an earlier version's Hub queued it, for a command handed over from its queue. */
+  z.object({ type: z.literal("command"), job: commandJobSchema, queuedAt: z.number().optional() }),
   z.object({ type: z.literal("sync"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("conversation"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("message-updated"), accountId: id, conversationId: id, messageId: id }),
@@ -45,7 +47,9 @@ const payloadSchema = z.discriminatedUnion("type", [
 ]);
 type JobPayload = z.infer<typeof payloadSchema>;
 
-const PRIORITY = { sync: 0, answer: 1, conversation: 2, "message-updated": 3 } as const;
+const PRIORITY = { command: 0, sync: 1, answer: 2, conversation: 3, "message-updated": 4 } as const;
+/** Requests a command may need: it starts only with this many left, so it is never cut short. */
+const COMMAND_BUDGET = 20;
 /** Commands that change nothing in Chatwoot: their post needs no sync. */
 const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set(["panel", "pick-assignee"]);
 /** A job that takes longer than this is logged. */
@@ -53,8 +57,9 @@ const SLOW_JOB_MS = 5000;
 /** Stop draining and continue in a new invocation after this long (alarms may run 15 minutes). */
 const RUN_WALL_MS = 5 * 60 * 1000;
 /**
- * Discord interaction tokens are valid for 15 minutes. A command older than this (handed over by
- * an earlier version's queue) is dropped, and the invoker told while the token still works.
+ * Discord interaction tokens are valid for 15 minutes. A command that cannot start within this
+ * time is dropped, and the invoker is told while the token still works: running it later could
+ * not report its result, and the invoker may already have acted in Chatwoot.
  */
 const COMMAND_START_DEADLINE_MS = 12 * 60 * 1000;
 const EXPIRED = "❌ This could not start in time, so nothing was done. Please try again.";
@@ -135,31 +140,18 @@ export class Conversation extends DurableObject<Env> {
   }
 
   /**
-   * Runs a command given in the post at once, at most once per interaction, and replaces the
-   * invoker's "thinking…" with its result. The post's tags and card follow in a sync job.
-   * `queuedAt`: when an earlier version queued it, for a command handed over from its queue.
+   * Queues a command given in the post, once per interaction: a repeated (replayed) request is
+   * ignored. It runs next, ahead of the conversation's background work; other conversations'
+   * work never delays it.
    */
-  async runCommand(job: CommandJob, queuedAt = Date.now()): Promise<void> {
-    const { accountId, conversationId } = job;
-    await this.adopt(accountId, conversationId);
+  async enqueueCommand(job: CommandJob, queuedAt?: number): Promise<void> {
+    await this.adopt(job.accountId, job.conversationId);
     if (!this.store.acceptInteraction(job.interactionId)) {
       log.warn("repeated interaction ignored", { interactionId: job.interactionId });
       return;
     }
-    const settings = await loadSettings(this.env);
-    const budget = new Budget(settings.config.relay.subrequestBudget);
-    const rest = new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, budget.fetch);
-    if (Date.now() - queuedAt > COMMAND_START_DEADLINE_MS) {
-      log.warn("command expired before it could run; dropped", { interactionId: job.interactionId });
-      await respond(rest, job, EXPIRED);
-      return;
-    }
-    const { content, components, conversationGone } = await executeCommand(job, settings, budget.fetch);
-    // Chatwoot sends no webhook when a conversation is deleted: let its job close the post.
-    if (conversationGone) this.enqueue({ type: "conversation", accountId, conversationId });
-    else if (!READ_ONLY_ACTIONS.has(job.action.type)) this.enqueue({ type: "sync", accountId, conversationId });
+    this.enqueue({ type: "command", job, ...(queuedAt === undefined ? {} : { queuedAt }) });
     await this.schedule();
-    await respond(rest, job, content, components);
   }
 
   /**
@@ -202,7 +194,8 @@ export class Conversation extends DurableObject<Env> {
         this.store.deleteJob(job.key);
         continue;
       }
-      if (Date.now() - startedAt > RUN_WALL_MS) {
+      const required = parsed.data.type === "command" ? COMMAND_BUDGET : 2;
+      if (budget.remaining < required || Date.now() - startedAt > RUN_WALL_MS) {
         yielded = true;
         break;
       }
@@ -222,6 +215,11 @@ export class Conversation extends DurableObject<Env> {
   private async run(job: Job, payload: JobPayload, services: ProcessorContext): Promise<"done" | "yield"> {
     try {
       switch (payload.type) {
+        case "command":
+          // At most once: a command that sends a message must never run twice.
+          this.store.deleteJob(job.key);
+          await this.runCommand(payload.job, payload.queuedAt ?? job.createdAt, services);
+          return "done";
         case "sync":
           await this.syncPost(payload, services);
           this.store.completeJob(job);
@@ -231,7 +229,7 @@ export class Conversation extends DurableObject<Env> {
           if (outcome === "pending") {
             const held = this.store.get(HELD_KEY) !== undefined;
             this.store.set(HELD_KEY, "1");
-            this.store.deferJob(job, held ? HELD_RECHECK_MS : 1000);
+            this.store.postponeJob(job, held ? HELD_RECHECK_MS : 1000);
             return "done";
           }
           if (outcome === "done") {
@@ -274,6 +272,27 @@ export class Conversation extends DurableObject<Env> {
       this.store.retryJob(job, backoff);
       return "done";
     }
+  }
+
+  /** Runs a command and replaces the invoker's "thinking…" with its result; the post follows in a sync job. */
+  private async runCommand(job: CommandJob, queuedAt: number, services: ProcessorContext): Promise<void> {
+    const { accountId, conversationId } = job;
+    if (Date.now() - queuedAt > COMMAND_START_DEADLINE_MS) {
+      log.warn("command expired before it could run; dropped", { interactionId: job.interactionId });
+      await respond(services.rest, job, EXPIRED);
+      return;
+    }
+    if (Date.now() - queuedAt > SLOW_JOB_MS)
+      log.warn("command waited", { interactionId: job.interactionId, ms: Date.now() - queuedAt });
+    const { content, components, conversationGone } = await executeCommand(
+      job,
+      services.settings,
+      services.budget.fetch,
+    );
+    // Chatwoot sends no webhook when a conversation is deleted: let its job close the post.
+    if (conversationGone) this.enqueue({ type: "conversation", accountId, conversationId });
+    else if (!READ_ONLY_ACTIONS.has(job.action.type)) this.enqueue({ type: "sync", accountId, conversationId });
+    await respond(services.rest, job, content, components);
   }
 
   /**
@@ -382,6 +401,8 @@ async function respond(
 /** One job per key: a job queued again while it waits is not queued twice. */
 function jobKey(payload: JobPayload): string {
   switch (payload.type) {
+    case "command":
+      return `command:${payload.job.interactionId}`;
     case "sync":
     case "conversation":
       return `${payload.type}:${payload.accountId}:${payload.conversationId}`;

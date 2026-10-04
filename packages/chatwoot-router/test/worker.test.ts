@@ -52,16 +52,18 @@ async function webhook(payload: unknown, secret = "secret-acme", age = 0): Promi
 async function drain(timeout = 5000): Promise<void> {
   await vi.waitFor(
     async () => {
-      let due = 0;
-      for (const object of objects())
-        due += await runInDurableObject(
-          object,
-          (_instance, state) =>
-            state.storage.sql
-              .exec<{ count: number }>("SELECT COUNT(*) AS count FROM jobs WHERE not_before <= ?", Date.now())
-              .one().count,
-        );
-      expect(due).toBe(0);
+      const due = await Promise.all(
+        objects().map((object) =>
+          runInDurableObject(
+            object,
+            (_instance, state) =>
+              state.storage.sql
+                .exec<{ count: number }>("SELECT COUNT(*) AS count FROM jobs WHERE not_before <= ?", Date.now())
+                .one().count,
+          ),
+        ),
+      );
+      expect(due.reduce((sum, count) => sum + count, 0)).toBe(0);
     },
     { timeout, interval: 50 },
   );
@@ -69,20 +71,26 @@ async function drain(timeout = 5000): Promise<void> {
 
 afterEach(async () => {
   await drain();
-  for (const object of objects())
-    await runInDurableObject(object, async (_instance, state) => {
-      state.storage.sql.exec("DELETE FROM jobs; DELETE FROM cache");
-      await state.storage.deleteAlarm();
-    });
+  await Promise.all(
+    objects().map((object) =>
+      runInDurableObject(object, async (_instance, state) => {
+        state.storage.sql.exec("DELETE FROM jobs; DELETE FROM cache");
+        await state.storage.deleteAlarm();
+      }),
+    ),
+  );
   vi.restoreAllMocks();
 });
 
 async function retryNow() {
-  for (const object of objects())
-    await runInDurableObject(object, async (_instance, state) => {
-      state.storage.sql.exec("UPDATE jobs SET not_before = 0");
-      await state.storage.setAlarm(Date.now());
-    });
+  await Promise.all(
+    objects().map((object) =>
+      runInDurableObject(object, async (_instance, state) => {
+        if (state.storage.sql.exec("UPDATE jobs SET not_before = 0").rowsWritten > 0)
+          await state.storage.setAlarm(Date.now());
+      }),
+    ),
+  );
   await drain();
 }
 

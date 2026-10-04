@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Replace 0.31.0's partition with one Durable Object per conversation and the Hub. Each conversation's object
   owns its post, receipts, cursor, card, drafts and queue, so one slow conversation never delays another.
-  Commands run at once in their conversation's object instead of queuing; the post's card follows right after.
+  A command is queued in its conversation's object and runs next, ahead of that conversation's background work
+  and never behind another conversation's; the post's card follows in a sync job.
   The Hub only maps posts to conversations, counts the triage bot's hourly budget, and runs the sweep and the
   support queue.
 - A customer message held during an inbox bot's turn is read again every five minutes, and a status change
@@ -26,8 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - From 0.30.0 or earlier (one Hub): deploy over it with the same Worker name, keeping the `Hub` class and adding
   `Conversation` (`exports.durableObject({ storage: "sqlite" })`, bound as `CONVERSATION`); export both from
   your entry point. Each conversation takes over what the Hub recorded about it on first use: posts, receipts
-  (deleting an older message in Chatwoot still deletes its Discord copy), cards and drafts carry over. See
-  [Operations](docs/operations.md).
+  (deleting an older message in Chatwoot still deletes its Discord copy), cards and drafts carry over. Coming
+  from 0.28.0 or earlier, also follow the 0.29.0 and 0.30.0 notes. See [Operations](docs/operations.md),
+  including when a rollback is safe.
 - 0.31.0 was not meant to be deployed over a Hub without its adoption runbook; this release replaces it.
 
 ## [0.31.0] - 2026-10-03

@@ -1075,3 +1075,21 @@ describe("agent bot lifecycle", () => {
     },
   );
 });
+
+describe("held conversation job", () => {
+  it("stays due when an event comes while it is being checked, instead of waiting for the next recheck", async () => {
+    await withStore(async (store) => {
+      store.enqueue("conversation:3:12", 3, "{}");
+      const running = store.nextDueJob();
+      if (!running) throw new Error("job missing");
+      store.enqueue("conversation:3:12", 3, "{}"); // a status webhook while the check runs
+      store.postponeJob(running, 5 * 60 * 1000);
+      expect(store.nextWakeup()).toBeLessThanOrEqual(Date.now());
+
+      const held = store.nextDueJob();
+      if (!held) throw new Error("job missing");
+      store.postponeJob(held, 5 * 60 * 1000);
+      expect((store.nextWakeup() ?? 0) - Date.now()).toBeGreaterThan(4 * 60 * 1000);
+    });
+  });
+});

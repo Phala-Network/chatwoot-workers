@@ -72,7 +72,7 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
 ```
 
 Each conversation has its own Durable Object, so one slow conversation never delays another, and a
-command runs at once instead of waiting behind background work. The Hub only knows which
+command runs next in its conversation, ahead of that conversation's background work. The Hub only knows which
 conversation each post belongs to, counts the triage bot's hourly budget, and runs the sweep and
 the support queue.
 

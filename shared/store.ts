@@ -114,6 +114,19 @@ export class QueueStore {
     this.sql.exec("UPDATE jobs SET not_before = ? WHERE key = ?", this.now() + delayMs, job.key);
   }
 
+  /**
+   * Makes a job due again after `delayMs`, unless it was queued again while it ran (it is due
+   * then), clearing its failures.
+   */
+  postponeJob(job: Job, delayMs: number): void {
+    this.sql.exec(
+      "UPDATE jobs SET not_before = ?, attempts = 0 WHERE key = ? AND version = ?",
+      this.now() + delayMs,
+      job.key,
+      job.version,
+    );
+  }
+
   prune(): void {
     this.sql.exec("DELETE FROM cache WHERE expires_at IS NOT NULL AND expires_at <= ?", this.now());
   }

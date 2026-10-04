@@ -214,16 +214,21 @@ export class DiscordForum implements ForumClient {
     const [id, token] = this.cache.get(key)?.split(":") ?? [];
     if (id && token) return { id, token };
     const applicationId = await this.applicationId();
-    const hooks = await this.rest.get<RESTGetAPIChannelWebhooksResult>(Routes.channelWebhooks(forumChannelId));
-    const existing = hooks.find(
-      (hook) => hook.type === WebhookType.Incoming && hook.application_id === applicationId && hook.token,
-    );
-    const hook =
-      existing ??
-      (await this.rest.post<RESTPostAPIChannelWebhookResult, RESTPostAPIChannelWebhookJSONBody>(
+    // The oldest of this application's webhooks: conversations creating one at the same time all
+    // settle on the same one.
+    const oldest = async () =>
+      (await this.rest.get<RESTGetAPIChannelWebhooksResult>(Routes.channelWebhooks(forumChannelId)))
+        .filter((hook) => hook.type === WebhookType.Incoming && hook.application_id === applicationId && hook.token)
+        .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))[0];
+    let hook = await oldest();
+    if (!hook) {
+      await this.rest.post<RESTPostAPIChannelWebhookResult, RESTPostAPIChannelWebhookJSONBody>(
         Routes.channelWebhooks(forumChannelId),
         { body: { name: WEBHOOK_NAME } },
-      ));
+      );
+      hook = await oldest();
+      if (!hook) throw new Error("Discord did not list the webhook it created");
+    }
     if (!hook.token) throw new Error("Discord returned a webhook without a token");
     this.cache.set(key, `${hook.id}:${hook.token}`);
     return { id: hook.id, token: hook.token };

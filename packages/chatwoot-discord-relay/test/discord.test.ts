@@ -113,21 +113,31 @@ describe("DiscordForum", () => {
   });
 
   it("creates the webhook when the forum has none of this application's, even one of the same name", async () => {
+    const hooks = [{ id: "2", token: "x", type: 1, name: "Chatwoot", application_id: "999999999999999999" }];
+    const ours = (id: string) => ({
+      id,
+      token: `token-${id}`,
+      type: 1,
+      name: "Chatwoot",
+      application_id: "100000000000000001",
+    });
     const { requests } = mockFetch(
       application,
-      on("GET", `${api}/channels/55/webhooks`, () =>
-        json([{ id: "2", token: "x", type: 1, name: "Chatwoot", application_id: "999999999999999999" }]),
-      ),
-      on("POST", `${api}/channels/55/webhooks`, () =>
-        json({ id: "900", token: "new-token", type: 1, name: "Chatwoot", application_id: "100000000000000001" }),
-      ),
-      on("POST", `${api}/webhooks/900/new-token`, () => json({ id: "m1", channel_id: "thread-1" })),
+      on("GET", `${api}/channels/55/webhooks`, () => json(hooks)),
+      on("POST", `${api}/channels/55/webhooks`, () => {
+        // Another conversation created one at the same moment, before this one.
+        hooks.push(ours("901"), ours("900"));
+        return json(ours("901"));
+      }),
+      on("POST", `${api}/webhooks/900/token-900`, () => json({ id: "m1", channel_id: "thread-1" })),
     );
     await forum().execute("55", { content: "hi", thread_name: "Ticket" });
     expect(
       requests.find((request) => request.url.pathname === "/api/v10/channels/55/webhooks" && request.method === "POST")
         ?.body,
     ).toBe(JSON.stringify({ name: "Chatwoot" }));
+    // Both settle on the oldest.
+    expect(requests.at(-1)?.url.pathname).toBe("/api/v10/webhooks/900/token-900");
   });
 
   it("links a post in its forum's guild, looking the guild up once", async () => {

@@ -148,11 +148,20 @@ export class Router extends DurableObject<Env> {
         : [],
     );
     for (const _ of routed) budget.consume();
-    await Promise.all(
+    // A conversation that cannot take it now is handed over again by the next pass.
+    const results = await Promise.allSettled(
       routed.map((conversationId) =>
         conversationRouter(this.env, accountId, conversationId).enqueueConversation(accountId, conversationId),
       ),
     );
+    results.forEach((result, index) => {
+      if (result.status === "rejected")
+        log.warn("sweep could not hand over a conversation", {
+          accountId,
+          conversationId: routed[index],
+          ...errorFields(result.reason),
+        });
+    });
     if (conversations.length === 0) {
       this.store.delete(key);
       return;

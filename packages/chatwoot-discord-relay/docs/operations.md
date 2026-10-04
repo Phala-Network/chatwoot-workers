@@ -30,12 +30,17 @@ post for those conversations.
 ## Upgrading from a version with one Hub (0.30.0 and earlier)
 
 Earlier versions kept every conversation in the Hub Durable Object. Deploy this version over it,
-with the same Worker name and the `Hub` class kept: nothing else is needed. Each conversation's
-own Durable Object takes over what the Hub recorded about it (its post, cursor, card, the Discord
-messages posted for each Chatwoot message, the latest draft) the first time it is used, and jobs
-left in the Hub's queue are handed to their conversations. The Hub keeps its copy, so a rollback to
-the earlier version finds its state as it was at the upgrade; posts and messages created after the
-upgrade are then unknown to it, so roll back only right after an upgrade that went wrong.
+with the same Worker name and the `Hub` class kept. Each conversation's own Durable Object takes
+over what the Hub recorded about it (its post, cursor, card, the Discord messages posted for each
+Chatwoot message, the latest draft, this hour's triage count) the first time it is used, and jobs
+left in the Hub's queue are handed to their conversations. Coming from 0.28.0 or earlier, first
+follow the 0.29.0 and 0.30.0 upgrade notes in the [changelog](../CHANGELOG.md): routing moved to
+chatwoot-router, so the relay's `routing` settings go, and routing jobs left in the Hub are dropped
+(the router's sweep routes pending conversations).
+
+Rolling back to the earlier version is safe only before this one handled anything: after that, the
+Hub no longer matches what was posted (the earlier version would post messages again or miss new
+posts). Once it has run, fix forward, or stop both and reconcile the posts before resuming.
 
 ## State and recovery
 

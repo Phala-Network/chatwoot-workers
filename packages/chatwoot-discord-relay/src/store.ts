@@ -126,6 +126,8 @@ export interface ConversationExport {
   posted: Record<string, SqlStorageValue>[];
   derived: Record<string, SqlStorageValue>[];
   responses: Record<string, SqlStorageValue>[];
+  /** The conversation's hourly triage counts. */
+  counters: Record<string, SqlStorageValue>[];
   draft?: { answerId: string; text: string };
 }
 
@@ -217,6 +219,32 @@ export class Store extends QueueStore implements RelayStore, Cache {
     return row ? { accountId: row.account_id, conversationId: row.conversation_id } : undefined;
   }
 
+  /**
+   * Up to `limit` of the account's posts an earlier version relayed (they have a cursor; posts only
+   * registered by Hub.claimThread have none) that have no card, whose ticket was not resolved when
+   * last synced (`state` is Relay.stateOf, which starts with the status), and that were not taken
+   * in the last `retryMs`, nor handed over to the conversation's own object; each is taken (see Hub.backfillCards).
+   */
+  takePostsWithoutCard(accountId: number, limit: number, retryMs: number): number[] {
+    const ids = this.sql
+      .exec<{ conversation_id: number }>(
+        `SELECT c.conversation_id FROM conversations c
+         LEFT JOIN cache taken ON taken.key = 'card-backfill:' || c.account_id || ':' || c.conversation_id
+           AND (taken.expires_at IS NULL OR taken.expires_at > ?)
+         WHERE c.account_id = ? AND c.thread_id IS NOT NULL AND c.cursor IS NOT NULL AND c.card_id IS NULL
+           AND taken.key IS NULL
+           AND (c.state IS NULL OR c.state NOT LIKE '["resolved"%')
+         ORDER BY c.conversation_id DESC LIMIT ?`,
+        this.now(),
+        accountId,
+        limit,
+      )
+      .toArray()
+      .map((row) => row.conversation_id);
+    for (const id of ids) this.set(`card-backfill:${accountId}:${id}`, "1", retryMs);
+    return ids;
+  }
+
   setCursor(accountId: number, conversationId: number, cursor: number): void {
     this.ensureRow(accountId, conversationId);
     this.sql.exec(
@@ -269,6 +297,8 @@ export class Store extends QueueStore implements RelayStore, Cache {
       this.sql.exec(`SELECT * FROM ${table} ${where}`, accountId, conversationId).toArray();
     const [row] = rows("conversations");
     if (!row) return undefined;
+    // Its own object gives the post a card from now on (see takePostsWithoutCard).
+    this.set(`card-backfill:${accountId}:${conversationId}`, "1");
     const answerId = typeof row.answer_id === "string" ? row.answer_id : undefined;
     const draft = answerId === undefined ? undefined : this.get(`answer:${answerId}`);
     return {
@@ -276,6 +306,9 @@ export class Store extends QueueStore implements RelayStore, Cache {
       posted: rows("posted_messages"),
       derived: rows("derived_messages"),
       responses: rows("submitted_responses"),
+      counters: this.sql
+        .exec("SELECT * FROM counters WHERE name LIKE ?", `triage:${accountId}:${conversationId}:%`)
+        .toArray(),
       ...(answerId !== undefined && draft !== undefined ? { draft: { answerId, text: draft } } : {}),
     };
   }
@@ -293,6 +326,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
     for (const row of data.posted) insert("posted_messages", row);
     for (const row of data.derived) insert("derived_messages", row);
     for (const row of data.responses) insert("submitted_responses", row);
+    for (const row of data.counters) insert("counters", row);
     if (data.draft) this.set(`answer:${data.draft.answerId}`, data.draft.text, draftTtlMs);
   }
 

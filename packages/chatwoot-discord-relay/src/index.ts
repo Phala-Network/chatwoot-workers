@@ -159,15 +159,8 @@ app.post("/discord/interactions", bodyLimit({ maxSize: 1024 * 1024 }), async (c)
       },
     });
     const job = result.job;
-    // The command runs now, in its conversation's object, after Discord has its "thinking…".
-    if (job)
-      c.executionCtx.waitUntil(
-        conversationStub(c.env, job.accountId, job.conversationId)
-          .runCommand(job)
-          .catch((error: unknown) =>
-            log.error("command failed", { interactionId: job.interactionId, ...errorFields(error) }),
-          ),
-      );
+    // Durably queued before Discord learns it was accepted.
+    if (job) await conversationStub(c.env, job.accountId, job.conversationId).enqueueCommand(job);
     return c.json(result.response);
   } catch (error) {
     log.error("interaction failed", { interactionId: interaction.id, ...errorFields(error) });

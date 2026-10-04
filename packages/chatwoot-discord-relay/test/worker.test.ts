@@ -338,15 +338,18 @@ async function signedInteraction(payload: unknown, timestampSeconds: number, tam
 }
 
 async function dueJobs(): Promise<number> {
-  let due = 0;
-  for (const object of objects())
-    due += await runInDurableObject(object, (_instance, state) => {
-      const row = state.storage.sql
-        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE not_before <= ?", Date.now())
-        .one();
-      return row.n;
-    });
-  return due;
+  const due = await Promise.all(
+    objects().map((object) =>
+      runInDurableObject(
+        object,
+        (_instance, state) =>
+          state.storage.sql
+            .exec<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE not_before <= ?", Date.now())
+            .one().n,
+      ),
+    ),
+  );
+  return due.reduce((sum, count) => sum + count, 0);
 }
 
 /**
@@ -1169,6 +1172,26 @@ describe("worker", () => {
     });
   });
 
+  it("gives a post an earlier version left without a card its card, however long ago its ticket was active", async () => {
+    const thread = "100000000000030034";
+    await runInDurableObject(hub(), (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO conversations (account_id, conversation_id, thread_id, cursor, state) VALUES (3, 134, ?, 13401, ?)",
+        thread,
+        JSON.stringify(["open"]),
+      );
+    });
+    world.conversation(134, [{ id: 13401, content: "hello", message_type: 0 }]);
+    world.threads.set(thread, FORUM);
+    const quiet = world.conversations.get(134);
+    if (quiet) quiet.lastActivityAt = Math.floor(Date.now() / 1000) - 7 * 24 * 3600;
+    const cards = world.cards().length;
+    await sweep();
+    await vi.waitFor(() => expect(world.cards()).toHaveLength(cards + 1));
+    await sweep();
+    expect(world.cards()).toHaveLength(cards + 1);
+  });
+
   it("runs a command at once, while the sweep still waits for Chatwoot", async () => {
     const thread = "100000000000030036";
     await runInDurableObject(hub(), (_instance, state) => {
@@ -1346,7 +1369,7 @@ describe("worker", () => {
     await vi.waitFor(() =>
       expect(world.sent("GET", /^\/api\/v1\/accounts\/3\/conversations\/50074$/).length).toBeGreaterThan(0),
     );
-  });
+  }, 15000); // 75 conversations each start their own object.
 
   it.each(["status", "recheck"])(
     "holds a pending conversation job, rechecking it every few minutes, and releases it through %s",

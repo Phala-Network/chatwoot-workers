@@ -20,8 +20,8 @@ it does not cover).
 
 `src/index.ts` verifies requests and hands work to the conversation's Durable Object; each request
 uses a few milliseconds of CPU. Commands that need no Chatwoot call (editors, validation, refusals)
-are answered directly; the rest are deferred and run at once, after the response, in the
-conversation's object.
+are answered directly; the rest are deferred: queued in the conversation's object before the
+response, and run next there.
 
 ## Durable Objects
 
@@ -33,9 +33,10 @@ independent between conversations: a slow request delays only its own conversati
 `src/hub.ts`, with SQLite: one object shared by all conversations. Conversations only read or write
 its storage (which conversation a post belongs to, the triage bot's hourly count), so they never wait
 for its own background work, the sweep and the support queue. Earlier versions kept every
-conversation here; each conversation's object takes its records over on first use.
+conversation here; each conversation's object takes its records over on first use, and the sweep
+hands posts those versions left without a card to their conversations.
 
-Jobs run by priority (a sync after a command first), failures retry with exponential backoff (5 s …
+Jobs run by priority (commands first), failures retry with exponential backoff (5 s …
 30 min), and a run yields before the subrequest limit. A job that Discord rate limits waits as long
 as Discord asks, without counting an attempt. A command runs at most once: it is not retried, since
 running it again could, for example, send a reply twice.
@@ -83,9 +84,11 @@ ones (for example an import of history): keep such an import in an inbox the rel
 
 ## Commands
 
-`src/commands/`. Deferred commands run at once in their conversation's object, at most once, never
-retried, so a reply is never sent twice; a repeated interaction is refused (see the
-[security model](../README.md#security-model)). The post's tags and card follow in a sync job.
+`src/commands/`. Deferred commands run first in their conversation's object, one at a time, at most
+once, never retried, so a reply is never sent twice; a repeated interaction is refused (see the
+[security model](../README.md#security-model)). One that cannot start within 12 minutes is dropped,
+because Discord's interaction token (valid 15 minutes) could soon no longer report its result, and
+the invoker is told that nothing was done. The post's tags and card follow in a sync job.
 
 ## Clients
 
