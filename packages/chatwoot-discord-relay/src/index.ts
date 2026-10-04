@@ -1,5 +1,5 @@
 // Worker entry: verifies and acknowledges Chatwoot webhooks and Discord interactions, and hands
-// all slow work to the Hub Durable Object. Each request stays within a few milliseconds of CPU.
+// the work to the conversation's Durable Object. Each request stays within a few milliseconds of CPU.
 
 import type { APIInteraction } from "discord-api-types/v10";
 import { verifyKey } from "discord-interactions";
@@ -13,19 +13,16 @@ import { CONTENT_MAX } from "./commands/definitions.ts";
 import { readDraft } from "./commands/draft.ts";
 import { handleInteraction, privately } from "./commands/handler.ts";
 import { ConfigError } from "./config.ts";
+import { conversationStub } from "./conversation.ts";
 import { DiscordRest } from "./discord/rest.ts";
 import type { Env } from "./env.ts";
-import { HUB_NAME } from "./hub.ts";
+import { hub } from "./hub.ts";
 import { loadSettings } from "./settings.ts";
 
 /** Reply with draft may look up the triage bot's answer this long, while Discord waits for the reply editor. */
 const DRAFT_DEADLINE_MS = 2000;
 
 const app = new Hono<{ Bindings: Env }>();
-
-function hub(env: Env) {
-  return env.HUB.getByName(HUB_NAME);
-}
 
 app.get("/healthz", async (c) => {
   try {
@@ -68,7 +65,7 @@ app.post("/chatwoot/webhook", bodyLimit({ maxSize: 2 * 1024 * 1024 }), async (c)
     return c.text("account does not match the webhook secret", 403);
   }
 
-  const stub = hub(c.env);
+  const stub = conversationStub(c.env, target.accountId, target.conversationId);
   if (target.type === "message-updated") {
     await stub.enqueueMessageUpdate(target.accountId, target.conversationId, target.messageId);
   } else {
@@ -78,7 +75,7 @@ app.post("/chatwoot/webhook", bodyLimit({ maxSize: 2 * 1024 * 1024 }), async (c)
 });
 
 // The triage bot's hook, signed like Chatwoot's webhooks: its answer `answerId` to message
-// `replyTo` is in the post `threadId`, with the reply `draft` it proposes (see Hub.triageAnswered).
+// `replyTo` is in the post `threadId`, with the reply `draft` it proposes (see Conversation.triageAnswered).
 const answerSchema = z.strictObject({
   threadId: z.string().regex(/^\d{17,20}$/),
   answerId: z.string().regex(/^\d{17,20}$/),
@@ -103,7 +100,14 @@ app.post("/triage/answered", bodyLimit({ maxSize: 64 * 1024 }), async (c) => {
   } catch {
     return c.text("bad request", 400);
   }
-  await hub(c.env).triageAnswered(answer.threadId, answer.answerId, answer.replyTo, answer.draft);
+  // An answer in a post that is not a ticket's changes nothing.
+  const ticket = await hub(c.env).ticketForThread(answer.threadId);
+  if (ticket)
+    await conversationStub(c.env, ticket.accountId, ticket.conversationId).triageAnswered(
+      ticket.accountId,
+      ticket.conversationId,
+      answer,
+    );
   return c.json({ ok: true });
 });
 
@@ -128,13 +132,22 @@ app.post("/discord/interactions", bodyLimit({ maxSize: 1024 * 1024 }), async (c)
     return c.text("bad request", 400);
   }
 
-  const stub = hub(c.env);
+  let ticket: { accountId: number; conversationId: number } | undefined;
   try {
     const result = await handleInteraction(interaction, {
       settings,
-      ticketForThread: async (threadId) => (await stub.ticketForThread(threadId)) ?? undefined,
+      ticketForThread: async (threadId) => {
+        ticket = (await hub(c.env).ticketForThread(threadId)) ?? undefined;
+        return ticket;
+      },
       draftOf: async (threadId, answerId) => {
-        const kept = await stub.answerDraft(answerId);
+        const kept = ticket
+          ? await conversationStub(c.env, ticket.accountId, ticket.conversationId).answerDraft(
+              ticket.accountId,
+              ticket.conversationId,
+              answerId,
+            )
+          : null;
         if (kept !== null) return { text: kept };
         const rest = new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, (request) =>
           fetch(request, { signal: deadline }),
@@ -145,7 +158,16 @@ app.post("/discord/interactions", bodyLimit({ maxSize: 1024 * 1024 }), async (c)
         }));
       },
     });
-    if (result.job) await stub.enqueueCommand(result.job);
+    const job = result.job;
+    // The command runs now, in its conversation's object, after Discord has its "thinking…".
+    if (job)
+      c.executionCtx.waitUntil(
+        conversationStub(c.env, job.accountId, job.conversationId)
+          .runCommand(job)
+          .catch((error: unknown) =>
+            log.error("command failed", { interactionId: job.interactionId, ...errorFields(error) }),
+          ),
+      );
     return c.json(result.response);
   } catch (error) {
     log.error("interaction failed", { interactionId: interaction.id, ...errorFields(error) });
@@ -171,4 +193,5 @@ const handler = {
 
 export default handler;
 
+export { Conversation } from "./conversation.ts";
 export { Hub } from "./hub.ts";

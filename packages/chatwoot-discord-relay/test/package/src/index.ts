@@ -1,1 +1,1 @@
-export { default, Hub } from "chatwoot-discord-relay";
+export { Conversation, default, Hub } from "chatwoot-discord-relay";

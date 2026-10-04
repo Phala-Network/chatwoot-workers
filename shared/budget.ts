@@ -32,6 +32,12 @@ export class Budget {
     return this.limit - this.used;
   }
 
+  /** Counts a request that is not a fetch, such as a call to another Durable Object. */
+  consume(): void {
+    if (this.used >= this.limit) throw new BudgetExhaustedError();
+    this.used += 1;
+  }
+
   readonly fetch: Fetch = (request) => {
     if (this.used >= this.limit) return Promise.reject(new BudgetExhaustedError());
     this.used += 1;

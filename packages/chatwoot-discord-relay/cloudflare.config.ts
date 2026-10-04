@@ -4,13 +4,16 @@
 import { bindings, defineConfig, defineWorker, exports, triggers } from "cf/config";
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 
-// This Worker, which defines the Hub Durable Object; the HUB binding names it so that its type is inferred.
+// This Worker, which defines the Durable Objects; the bindings name them so that their types are inferred.
 const relay = defineWorker({
   name: "chatwoot-discord-relay",
   entrypoint,
   // Keep in step with vitest.config.ts.
   compatibilityDate: "2026-08-15",
-  exports: { Hub: exports.durableObject({ storage: "sqlite" }) },
+  exports: {
+    Hub: exports.durableObject({ storage: "sqlite" }),
+    Conversation: exports.durableObject({ storage: "sqlite" }),
+  },
 });
 
 export default defineConfig(({ mode }) => ({
@@ -20,7 +23,8 @@ export default defineConfig(({ mode }) => ({
     // Reconciliation sweep. The Free plan allows 5 cron triggers per account; this uses one.
     triggers: [triggers.scheduled({ schedule: "*/5 * * * *" })],
     env: {
-      HUB: bindings.durableObject({ worker: relay, exportName: "Hub" }),
+      HUB: bindings.durableObject({ worker: relay, exportName: "Hub" as const }),
+      CONVERSATION: bindings.durableObject({ worker: relay, exportName: "Conversation" as const }),
       // Secrets (see .dev.vars.example). A declared secret is required: a deploy fails while one is not set. The
       // optional ones are declared in development only, so `npm run dev` loads them from .dev.vars too.
       DISCORD_BOT_TOKEN: bindings.secret(),

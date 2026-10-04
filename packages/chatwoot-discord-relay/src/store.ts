@@ -121,6 +121,14 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
 
 export type { Job } from "../../../shared/store.ts";
 
+export interface ConversationExport {
+  row: Record<string, SqlStorageValue>;
+  posted: Record<string, SqlStorageValue>[];
+  derived: Record<string, SqlStorageValue>[];
+  responses: Record<string, SqlStorageValue>[];
+  draft?: { answerId: string; text: string };
+}
+
 export class Store extends QueueStore implements RelayStore, Cache {
   /** A changed reply can qualify even on an already-scanned page. No notification was decided yet. */
   invalidateAnswerScans(accountId: number, conversationId: number): boolean {
@@ -209,30 +217,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
     return row ? { accountId: row.account_id, conversationId: row.conversation_id } : undefined;
   }
 
-  /**
-   * Up to `limit` of the account's posts that have no card, whose ticket was not resolved when
-   * last synced (`state` is Relay.stateOf, which starts with the status), and that were not taken
-   * in the last `retryMs`; each is taken (see backfillCards in hub.ts).
-   */
-  takePostsWithoutCard(accountId: number, limit: number, retryMs: number): number[] {
-    const ids = this.sql
-      .exec<{ conversation_id: number }>(
-        `SELECT c.conversation_id FROM conversations c
-         LEFT JOIN cache taken ON taken.key = 'card-backfill:' || c.account_id || ':' || c.conversation_id
-           AND (taken.expires_at IS NULL OR taken.expires_at > ?)
-         WHERE c.account_id = ? AND c.thread_id IS NOT NULL AND c.card_id IS NULL AND taken.key IS NULL
-           AND (c.state IS NULL OR c.state NOT LIKE '["resolved"%')
-         ORDER BY c.conversation_id DESC LIMIT ?`,
-        this.now(),
-        accountId,
-        limit,
-      )
-      .toArray()
-      .map((row) => row.conversation_id);
-    for (const id of ids) this.set(`card-backfill:${accountId}:${id}`, "1", retryMs);
-    return ids;
-  }
-
   setCursor(accountId: number, conversationId: number, cursor: number): void {
     this.ensureRow(accountId, conversationId);
     this.sql.exec(
@@ -273,6 +257,43 @@ export class Store extends QueueStore implements RelayStore, Cache {
       threadId,
       unknownCards(threadId),
     );
+  }
+
+  /**
+   * Everything recorded about one conversation: its row and the Discord messages posted for it. The
+   * single Hub of earlier versions hands each conversation over to its own Durable Object with this.
+   */
+  exportConversation(accountId: number, conversationId: number): ConversationExport | undefined {
+    const where = "WHERE account_id = ? AND conversation_id = ?";
+    const rows = (table: string) =>
+      this.sql.exec(`SELECT * FROM ${table} ${where}`, accountId, conversationId).toArray();
+    const [row] = rows("conversations");
+    if (!row) return undefined;
+    const answerId = typeof row.answer_id === "string" ? row.answer_id : undefined;
+    const draft = answerId === undefined ? undefined : this.get(`answer:${answerId}`);
+    return {
+      row,
+      posted: rows("posted_messages"),
+      derived: rows("derived_messages"),
+      responses: rows("submitted_responses"),
+      ...(answerId !== undefined && draft !== undefined ? { draft: { answerId, text: draft } } : {}),
+    };
+  }
+
+  /** Records a conversation handed over by exportConversation (in a store that has none of it yet). */
+  importConversation(data: ConversationExport, draftTtlMs: number): void {
+    const insert = (table: string, row: Record<string, SqlStorageValue>) => {
+      const columns = Object.keys(row);
+      this.sql.exec(
+        `INSERT OR REPLACE INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+        ...columns.map((column) => row[column] ?? null),
+      );
+    };
+    insert("conversations", data.row);
+    for (const row of data.posted) insert("posted_messages", row);
+    for (const row of data.derived) insert("derived_messages", row);
+    for (const row of data.responses) insert("submitted_responses", row);
+    if (data.draft) this.set(`answer:${data.draft.answerId}`, data.draft.text, draftTtlMs);
   }
 
   // RelayStore

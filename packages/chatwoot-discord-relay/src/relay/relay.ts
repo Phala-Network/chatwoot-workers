@@ -148,6 +148,13 @@ export interface RelayOptions {
   /** Messages created longer ago than this are relayed without notifications. */
   liveSeconds: number;
   now?: () => Date;
+  /** See NotifierOptions.reserveTriage. */
+  reserveTriage?: ((hour: string, event: string) => Promise<boolean>) | undefined;
+  /**
+   * Records that the conversation's post is `threadId`, unless another conversation's post is; false then.
+   * Unset: always true.
+   */
+  claimThread?: ((accountId: number, conversationId: number, threadId: string) => Promise<boolean>) | undefined;
 }
 
 /** A stored state that matches no conversation: the post's archived flag must be applied again. */
@@ -183,6 +190,7 @@ export class Relay {
       linkedAgent: options.linkedAgent,
       liveSeconds: options.liveSeconds,
       now: options.now ?? (() => new Date()),
+      reserveTriage: options.reserveTriage,
     });
   }
 
@@ -202,7 +210,7 @@ export class Relay {
     const { store } = this.options;
     const accountId = message.account.id;
     const conversation = message.conversation;
-    const parts = this.parts(message, text);
+    const parts = await this.parts(message, text);
     let threadId = store.conversation(accountId, conversation.id)?.threadId;
     if (threadId) {
       try {
@@ -385,9 +393,9 @@ export class Relay {
    * with room for them, so a message splits the same way on every attempt and a retry can
    * resume after the parts already posted.
    */
-  private parts(message: RelayMessage, text: string): WebhookMessage[] {
+  private async parts(message: RelayMessage, text: string): Promise<WebhookMessage[]> {
     const { frontendUrl, maxChunks } = this.options;
-    const notification = this.notifier.notification(message);
+    const notification = await this.notifier.notification(message);
     const chunks = split(text, CONTENT_LIMIT - this.notifier.reserve);
     const kept = chunks.slice(0, maxChunks);
     const username = senderName(message);
@@ -475,6 +483,8 @@ export class Relay {
       // Nothing announced yet: an assignee is announced after the run's messages.
       announcedAssignee: "",
     });
+    // Registered at once, so commands find the new post before its first message is in it.
+    await this.options.claimThread?.(accountId, conversation.id, threadId);
     return threadId;
   }
 

@@ -25,7 +25,10 @@ export default defineConfig({
         compatibilityDate: "2026-08-15",
         // Required by @cloudflare/vitest-pool-workers (the Worker itself does not need it).
         compatibilityFlags: ["nodejs_compat"],
-        durableObjects: { HUB: { className: "Hub", useSQLite: true } },
+        durableObjects: {
+          HUB: { className: "Hub", useSQLite: true },
+          CONVERSATION: { className: "Conversation", useSQLite: true },
+        },
         kvNamespaces: ["CONFIG_STORE"],
         bindings: {
           // Placeholder ids.

@@ -1,87 +1,51 @@
-// The single Durable Object that owns all state and does all background work.
+// The one Durable Object shared by every conversation. It knows which conversation each post
+// belongs to (commands are given in a post), counts the triage bot's hourly budget, and runs the
+// installation-wide background work: the reconciliation sweep and the hourly support queue.
+// Requests from conversations only read or write its storage, so none of them waits for that
+// background work.
 //
-// Requests (webhook events, deferred commands, sweeps) only write a job row and set an
-// alarm, so they return quickly. The alarm drains due jobs one at a time, which serializes work
-// per conversation (and globally), and yields to a fresh invocation before it would exceed the
-// per-invocation subrequest limit. Commands run at most once; failed background jobs back off (up
-// to 30 minutes) and retry until they succeed, so an outage of any length loses no background
-// work; nothing depends on a single delivery succeeding.
+// Earlier versions kept everything here, so its storage is where they left each conversation's
+// records: each conversation's own object takes them over on first use (see exportConversation).
 
 import { DurableObject } from "cloudflare:workers";
-import {
-  type APIMessageTopLevelComponent,
-  ComponentType,
-  MessageFlags,
-  type RESTPatchAPIWebhookWithTokenMessageJSONBody,
-  type RESTPatchAPIWebhookWithTokenMessageResult,
-  Routes,
-} from "discord-api-types/v10";
 import { z } from "zod";
 import { Budget, BudgetExhaustedError } from "../../../shared/budget.ts";
-import { chatwootClient, toRelayConversation } from "../../../shared/chatwoot/api.ts";
+import { CONVERSATIONS_PER_PAGE, chatwootClient } from "../../../shared/chatwoot/api.ts";
 import { parseJson } from "../../../shared/json.ts";
 import { errorFields, log } from "../../../shared/log.ts";
 import { retryDelay } from "../../../shared/store.ts";
-import { executeCommand } from "./commands/actions.ts";
-import { text } from "./commands/components.ts";
 import { type CommandJob, commandJobSchema } from "./commands/job.ts";
 import { relaysInbox, type Settings } from "./config.ts";
-import { DiscordForum } from "./discord/forum.ts";
+import { conversationStub } from "./conversation.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
 import type { Env } from "./env.ts";
-import { postQueue } from "./queue.ts";
+import { postQueue, type QueueContext } from "./queue.ts";
 import { queueBudget } from "./queue-limits.ts";
-import { latestMessageId, type ProcessorContext, processConversation, relayFor } from "./relay/processor.ts";
-import { isUnknownCard } from "./relay/relay.ts";
-import { processMessageUpdate } from "./relay/updates.ts";
 import { loadSettings } from "./settings.ts";
-import { type Job, Store } from "./store.ts";
+import { type ConversationExport, type Job, Store } from "./store.ts";
 
-export const HUB_NAME = "global";
+const HUB_NAME = "global";
+
+export function hub(env: Env) {
+  return env.HUB.getByName(HUB_NAME);
+}
 
 const id = z.number().int().positive();
 const payloadSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("command"), job: commandJobSchema }),
   z.object({ type: z.literal("sweep"), accountId: id }),
+  z.object({ type: z.literal("queue") }),
+  // Jobs an earlier version queued here; each goes to its conversation's object.
+  z.object({ type: z.literal("command"), job: commandJobSchema }),
   z.object({ type: z.literal("conversation"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("message-updated"), accountId: id, conversationId: id, messageId: id }),
-  z.object({ type: z.literal("queue") }),
   z.object({ type: z.literal("answer"), accountId: id, conversationId: id, answerId: z.string(), replyTo: z.string() }),
 ]);
 type JobPayload = z.infer<typeof payloadSchema>;
 
-const PRIORITY = {
-  command: 0,
-  answer: 1,
-  sweep: 1,
-  conversation: 2,
-  "message-updated": 3,
-  queue: 4,
-} as const;
-/** Requests a job may need before it can start without being cut short. */
-const COMMAND_BUDGET = 20;
-const MIN_BUDGET = 2;
 const sweepPassSchema = z.object({ cutoff: z.number(), page: z.number().int().positive(), startedAt: z.number() });
 const PASS_TTL_MS = 24 * 60 * 60 * 1000;
-/** Commands that change nothing in Chatwoot: their post needs no sync. */
-const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set(["panel", "pick-assignee"]);
-/** A job that takes longer than this is logged, to tell a slow upstream from a busy queue. */
-const SLOW_JOB_MS = 5000;
-/** Posts without a card a sweep queues at most, and how long before one is queued again. */
-const CARD_BACKFILL_PER_SWEEP = 10;
-const CARD_BACKFILL_RETRY_MS = 24 * 60 * 60 * 1000;
-/** Stop draining and continue in a new invocation after this long (alarms may run 15 minutes). */
+/** Stop draining and continue in a new invocation after this long. */
 const RUN_WALL_MS = 5 * 60 * 1000;
-/**
- * Discord interaction tokens are valid for 15 minutes. A command that cannot start within this
- * time is dropped, and the invoker is told while the token still works: running it later could
- * not report its result, and the invoker may already have acted in Chatwoot, so running it
- * could, for example, send a reply twice.
- */
-const COMMAND_START_DEADLINE_MS = 12 * 60 * 1000;
-const EXPIRED = "❌ This could not start in time, so nothing was done. Please try again.";
-/** How long a triage answer's draft is kept for Reply with draft, and the answer remembered. */
-const ANSWER_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 /** How long the support queue may be posted after it is due: Discord's nonce check covers a few minutes. */
 const QUEUE_RETRY_MS = 3 * 60 * 1000;
 
@@ -94,40 +58,46 @@ export class Hub extends DurableObject<Env> {
     this.store.migrate();
   }
 
-  /**
-   * Queues a conversation for syncing, at the earliest after `delayMs`.
-   */
-  async enqueueConversation(accountId: number, conversationId: number, delayMs = 0): Promise<void> {
-    this.enqueue({ type: "conversation", accountId, conversationId }, Date.now() + delayMs);
-    await this.schedule();
+  ticketForThread(threadId: string): { accountId: number; conversationId: number } | null {
+    return this.store.ticketForThread(threadId) ?? null;
+  }
+
+  /** Records that the conversation's post is `threadId`, unless another conversation's post is. */
+  claimThread(accountId: number, conversationId: number, threadId: string): boolean {
+    return this.ctx.storage.transactionSync(() => {
+      const owner = this.store.ticketForThread(threadId);
+      if (owner && (owner.accountId !== accountId || owner.conversationId !== conversationId)) return false;
+      this.store.updateConversation(accountId, conversationId, { threadId });
+      return true;
+    });
+  }
+
+  /** Forgets that `threadId` is the conversation's post (its conversation was deleted). */
+  releaseThread(accountId: number, conversationId: number, threadId: string): void {
+    const owner = this.store.ticketForThread(threadId);
+    if (owner?.accountId === accountId && owner.conversationId === conversationId)
+      this.store.forgetThread(accountId, conversationId);
   }
 
   /**
-   * Queues a check of a message reported as deleted (its Discord messages are removed), as
-   * answered by the customer (the response is posted), or with a changed outgoing delivery status.
+   * Counts a customer message `event` against the triage bot's budget of `hour` (once per event):
+   * whether it is within `limit`.
    */
-  async enqueueMessageUpdate(accountId: number, conversationId: number, messageId: number): Promise<void> {
-    // Do this on receipt: the conversation job runs before the message-update job.
-    if (this.store.invalidateAnswerScans(accountId, conversationId)) {
-      this.enqueue({ type: "conversation", accountId, conversationId });
-    }
-    this.enqueue({ type: "message-updated", accountId, conversationId, messageId });
-    await this.schedule();
+  reserveTriage(hour: string, event: string, limit: number): boolean {
+    return this.ctx.storage.transactionSync(
+      () =>
+        this.store.once(`triage-hour:${event}`, () => (this.store.increment(`triage:${hour}`) <= limit ? "1" : "")) ===
+        "1",
+    );
   }
 
-  /** Queues a command once per interaction: a repeated (replayed) request is ignored. */
-  async enqueueCommand(job: CommandJob): Promise<void> {
-    if (!this.store.acceptInteraction(job.interactionId)) {
-      log.warn("repeated interaction ignored", { interactionId: job.interactionId });
-      return;
-    }
-    this.enqueue({ type: "command", job });
-    await this.schedule();
+  /** What an earlier version recorded about a conversation, for its own object to take over. */
+  exportConversation(accountId: number, conversationId: number): ConversationExport | null {
+    return this.store.exportConversation(accountId, conversationId) ?? null;
   }
 
   /** Queues a reconciliation sweep for every configured account (called by the cron trigger). */
   async requestSweep(): Promise<void> {
-    this.store.wakeHeldJobs();
     for (const account of (await loadSettings(this.env)).config.accounts)
       this.enqueue({ type: "sweep", accountId: account.id });
     await this.schedule();
@@ -140,33 +110,9 @@ export class Hub extends DurableObject<Env> {
     await this.schedule();
   }
 
-  /**
-   * The triage bot's answer `answerId` to message `replyTo` is in the post, with the reply draft it proposes: the
-   * draft is kept for Reply with draft, and the post's card offers it under the answer (Relay.answered).
-   * Each answer is taken once, so a repeated call adds nothing.
-   */
-  async triageAnswered(threadId: string, answerId: string, replyTo: string, draft: string): Promise<void> {
-    const ticket = this.store.ticketForThread(threadId);
-    if (!ticket || this.store.get(answerKey(answerId)) !== undefined) return;
-    this.store.set(answerKey(answerId), draft, ANSWER_TTL_MS);
-    this.enqueue({ type: "answer", ...ticket, answerId, replyTo });
-    await this.schedule();
-  }
-
-  /** The draft the triage bot's hook sent with an answer, while it is kept. */
-  async answerDraft(answerId: string): Promise<string | null> {
-    return this.store.get(answerKey(answerId)) ?? null;
-  }
-
-  async ticketForThread(threadId: string): Promise<{ accountId: number; conversationId: number } | null> {
-    return this.store.ticketForThread(threadId) ?? null;
-  }
-
-  /** Cloudflare runs at most one alarm() at a time per Durable Object. */
   override async alarm(): Promise<void> {
     const settings = await loadSettings(this.env);
     const budget = new Budget(settings.config.relay.subrequestBudget);
-    const services = this.services(settings, budget);
     const startedAt = Date.now();
     let yielded = false;
 
@@ -183,11 +129,7 @@ export class Hub extends DurableObject<Env> {
         yielded = true;
         break;
       }
-      const jobStarted = Date.now();
-      const outcome = await this.run(job, payload, services);
-      const ms = Date.now() - jobStarted;
-      if (ms > SLOW_JOB_MS) log.warn("slow job", { job: job.key, ms });
-      if (outcome === "yield") {
+      if (!(await this.run(job, payload, settings, budget))) {
         this.store.deferJob(job);
         yielded = true;
         break;
@@ -196,123 +138,57 @@ export class Hub extends DurableObject<Env> {
     await this.schedule(yielded ? Date.now() : undefined);
   }
 
-  private async run(job: Job, payload: JobPayload, services: ProcessorContext): Promise<"done" | "yield"> {
+  /** Runs a job; false when the invocation's budget ran out before it was done. */
+  private async run(job: Job, payload: JobPayload, settings: Settings, budget: Budget): Promise<boolean> {
+    const context: QueueContext = {
+      settings,
+      store: this.store,
+      chatwoot: chatwootClient(settings.config.chatwoot.baseUrl, settings.secrets.CHATWOOT_RELAY_TOKEN, budget.fetch),
+      rest: new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, budget.fetch),
+    };
     try {
       switch (payload.type) {
-        case "command":
-          // At most once: a command that sends a message must never run twice.
-          this.store.deleteJob(job.key);
-          if (Date.now() - job.createdAt > COMMAND_START_DEADLINE_MS) {
-            log.warn("command expired before it could run; dropped", {
-              interactionId: payload.job.interactionId,
-              action: payload.job.action.type,
-            });
-            await respond(services.rest, payload.job, EXPIRED);
-            return "done";
-          }
-          if (Date.now() - job.createdAt > SLOW_JOB_MS) {
-            log.warn("command waited", { interactionId: payload.job.interactionId, ms: Date.now() - job.createdAt });
-          }
-          await this.runCommand(payload.job, services);
-          return "done";
         case "sweep":
-          await this.sweep(payload.accountId, services);
-          this.store.completeJob(job);
-          return "done";
-        case "conversation": {
-          const outcome = await processConversation(services, payload.accountId, payload.conversationId);
-          if (outcome === "pending") {
-            this.store.holdJob(job);
-            return "done";
-          }
-          if (outcome === "done") this.store.completeJob(job);
-          return outcome;
-        }
-        case "message-updated":
-          await processMessageUpdate(services, payload.accountId, payload.conversationId, payload.messageId);
-          this.store.completeJob(job);
-          return "done";
+          await this.sweep(payload.accountId, context, budget);
+          break;
         case "queue":
           // Discord drops a repeated post by its nonce only for a few minutes: however the job
           // is retried or deferred, nothing is posted after that, so the queue and its pings are
-          // never posted twice (the next hour's queue lists the same tickets). The run keeps the
-          // job's time, so every attempt posts the same messages with the same nonces.
-          await postQueue(services, job.createdAt, job.createdAt + QUEUE_RETRY_MS);
-          this.store.completeJob(job);
-          return "done";
-        case "answer":
-          // The card moves under the answer when the conversation's post is synced next.
-          services.relay.answered(payload.accountId, payload.conversationId, payload.answerId, payload.replyTo);
-          this.store.completeJob(job);
-          this.enqueue({ type: "conversation", accountId: payload.accountId, conversationId: payload.conversationId });
-          return "done";
+          // never posted twice. Every attempt posts the same messages with the same nonces.
+          await postQueue(context, job.createdAt, job.createdAt + QUEUE_RETRY_MS);
+          break;
+        default:
+          budget.consume();
+          await this.handOver(job, payload);
       }
+      this.store.completeJob(job);
+      return true;
     } catch (error) {
-      if (error instanceof BudgetExhaustedError) return "yield";
+      if (error instanceof BudgetExhaustedError) return false;
       const backoff = retryDelay(job.attempts);
-      if (error instanceof DiscordHttpError && error.retryAfterMs !== undefined) {
-        // Rate limited: wait as long as Discord asks without counting an attempt, so no rate
-        // limit, however long, drops the job.
-        const delay = Math.max(backoff, error.retryAfterMs);
-        log.warn("job rate limited by Discord; will retry", { job: job.key, delayMs: delay });
-        this.store.deferJob(job, delay);
-        return "done";
-      }
-      // Transient failures are warnings; a job that keeps failing is an error.
+      const delay = error instanceof DiscordHttpError ? Math.max(backoff, error.retryAfterMs ?? 0) : backoff;
       const logAt = job.attempts + 1 >= 3 ? log.error : log.warn;
       logAt("job failed; will retry", {
         job: job.key,
         attempts: job.attempts + 1,
-        delayMs: backoff,
+        delayMs: delay,
         ...errorFields(error),
       });
-      this.store.retryJob(job, backoff);
-      return "done";
-    }
-  }
-
-  private async runCommand(job: CommandJob, services: ProcessorContext): Promise<void> {
-    const { content, components, conversationGone } = await executeCommand(
-      job,
-      services.settings,
-      services.budget.fetch,
-    );
-    // Chatwoot sends no webhook when a conversation is deleted: let its job close the post.
-    if (conversationGone)
-      this.enqueue({ type: "conversation", accountId: job.accountId, conversationId: job.conversationId });
-    await respond(services.rest, job, content, components);
-    if (!conversationGone && !READ_ONLY_ACTIONS.has(job.action.type)) await this.syncAfterCommand(job, services);
-  }
-
-  /**
-   * Brings the post's tags and card in line right after a command, rather than with Chatwoot's
-   * event for the change, whose job waits for the change's activity line (see ACTIVITY_WAIT_MS)
-   * and then posts it, moving the card under it. Best effort: should this fail or run out of
-   * budget, that job does it.
-   */
-  private async syncAfterCommand(job: CommandJob, { chatwoot, relay }: ProcessorContext): Promise<void> {
-    const { accountId, conversationId } = job;
-    const threadId = this.store.conversation(accountId, conversationId)?.threadId;
-    if (!threadId) return;
-    try {
-      const conversation = await chatwoot.getConversation(accountId, conversationId);
-      if (conversation) await relay.sync(accountId, toRelayConversation(conversationId, conversation), threadId);
-    } catch (error) {
-      log.warn("post not synced after command", { accountId, conversationId, ...errorFields(error) });
+      this.store.retryJob(job, delay);
+      return true;
     }
   }
 
   /**
-   * Finds conversations whose post is behind (new messages, or tags/status/archive state that
-   * differ) and queues them. Covers webhooks that were never delivered and service downtime.
-   * A pass reads conversations newest activity first, down to the start of its window (since the
-   * previous pass started, at least `lookbackSeconds`, at most `maxCatchUpSeconds`), one page
-   * per job, continuing where it stopped until it is done. Activity means a new message
-   * (Chatwoot's `last_activity_at`); a change that creates none, such as only a custom
-   * attribute, relies on its webhook. Once a pass it also queues posts still without a card
-   * (backfillCards).
+   * Hands every conversation with activity in the window to its object, which queues it when its
+   * post is behind. Covers webhooks that were never delivered and service downtime. A pass reads
+   * conversations newest activity first, down to the start of its window (since the previous pass
+   * started, at least `lookbackSeconds`, at most `maxCatchUpSeconds`), one page per job,
+   * continuing where it stopped until it is done. Activity means a new message (Chatwoot's
+   * `last_activity_at`); a change that creates none, such as only a custom attribute, relies on
+   * its webhook.
    */
-  private async sweep(accountId: number, { settings, chatwoot, relay }: ProcessorContext): Promise<void> {
+  private async sweep(accountId: number, { settings, chatwoot }: QueueContext, budget: Budget): Promise<void> {
     const key = `sweep:${accountId}:pass`;
     const saved = sweepPassSchema.safeParse(parseJson(this.store.get(key)));
     const now = Date.now();
@@ -324,70 +200,59 @@ export class Hub extends DurableObject<Env> {
     );
     const pass = saved.success ? saved.data : { cutoff: now / 1000 - window, page: 1, startedAt: now };
     const account = settings.account(accountId);
-    let seen = 0;
-    let queued = 0;
     const conversations = await chatwoot.listConversations(accountId, pass.page);
-    let reachedCutoff = conversations.length === 0;
-    for (const conversation of conversations) {
-      if ((conversation.last_activity_at ?? 0) < pass.cutoff) {
-        reachedCutoff = true;
-        break;
-      }
-      const conversationId = conversation.id;
-      if (conversationId === undefined || !account || !relaysInbox(account, conversation.inbox_id)) continue;
-      seen += 1;
-      const row = this.store.conversation(accountId, conversationId);
-      const latest = latestMessageId(conversation);
-      const needsCursor = row?.threadId !== undefined && row.cursor === undefined;
-      const cursor = row?.cursor ?? settings.config.relay.startAfterMessageId;
-      const behind = needsCursor || (latest !== undefined && latest > cursor);
-      const stale =
-        row?.threadId !== undefined &&
-        (row.state !== relay.stateOf(toRelayConversation(conversationId, conversation)) ||
-          row.cardCovered === 1 ||
-          isUnknownCard(row.cardId));
-      if (behind || stale) {
-        this.enqueue({ type: "conversation", accountId, conversationId });
-        queued += 1;
-      }
-    }
-    if (pass.page === 1) queued += this.backfillCards(accountId);
+    const recent = conversations.filter((conversation) => (conversation.last_activity_at ?? 0) >= pass.cutoff);
+    const reachedCutoff = recent.length < conversations.length || conversations.length === 0;
+    const relayed = recent.flatMap((conversation) =>
+      conversation.id !== undefined && account && relaysInbox(account, conversation.inbox_id)
+        ? [{ conversationId: conversation.id, conversation }]
+        : [],
+    );
+    for (const _ of relayed) budget.consume();
+    await Promise.all(
+      relayed.map(({ conversationId, conversation }) =>
+        conversationStub(this.env, accountId, conversationId).reconcile(accountId, conversationId, conversation),
+      ),
+    );
+    const seen = relayed.length;
     if (reachedCutoff) {
       // The next pass covers list movement while this pass ran.
       this.store.set(`sweep:${accountId}:last`, String(pass.startedAt));
       this.store.delete(key);
-      log.info("sweep done", { accountId, pages: pass.page, seen, queued });
+      log.info("sweep done", { accountId, pages: pass.page, seen });
     } else {
       this.store.set(key, JSON.stringify({ ...pass, page: pass.page + 1 }), PASS_TTL_MS);
       this.enqueue({ type: "sweep", accountId });
-      log.info("sweep continues", { accountId, nextPage: pass.page + 1, seen, queued });
     }
   }
 
-  /**
-   * Queues a few of the account's posts without a card (from before cards) whose ticket is not
-   * resolved, however long ago their last activity, each at most once a day. Returns how many.
-   */
-  private backfillCards(accountId: number): number {
-    const ids = this.store.takePostsWithoutCard(accountId, CARD_BACKFILL_PER_SWEEP, CARD_BACKFILL_RETRY_MS);
-    for (const conversationId of ids) this.enqueue({ type: "conversation", accountId, conversationId });
-    return ids.length;
+  /** A job an earlier version queued here, given to its conversation's object. */
+  private async handOver(job: Job, payload: Exclude<JobPayload, { type: "sweep" | "queue" }>): Promise<void> {
+    if (payload.type === "command") {
+      const command: CommandJob = payload.job;
+      await conversationStub(this.env, command.accountId, command.conversationId).runCommand(command, job.createdAt);
+      return;
+    }
+    const { accountId, conversationId } = payload;
+    const stub = conversationStub(this.env, accountId, conversationId);
+    if (payload.type === "message-updated") {
+      await stub.enqueueMessageUpdate(accountId, conversationId, payload.messageId);
+      return;
+    }
+    if (payload.type === "answer") {
+      const threadId = this.store.conversation(accountId, conversationId)?.threadId;
+      const draft = this.store.get(`answer:${payload.answerId}`);
+      if (threadId && draft !== undefined) {
+        const { answerId, replyTo } = payload;
+        await stub.triageAnswered(accountId, conversationId, { threadId, answerId, replyTo, draft });
+        return;
+      }
+    }
+    await stub.enqueueConversation(accountId, conversationId);
   }
 
-  private services(settings: Settings, budget: Budget): ProcessorContext {
-    const rest = new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, budget.fetch);
-    const chatwoot = chatwootClient(
-      settings.config.chatwoot.baseUrl,
-      settings.secrets.CHATWOOT_RELAY_TOKEN,
-      budget.fetch,
-    );
-    const forum = new DiscordForum(rest, this.store);
-    const relay = relayFor(settings, forum, this.store);
-    return { settings, store: this.store, relay, forum, chatwoot, budget, rest };
-  }
-
-  private enqueue(payload: JobPayload, notBefore?: number): void {
-    this.store.enqueue(jobKey(payload), PRIORITY[payload.type], JSON.stringify(payload), notBefore);
+  private enqueue(payload: JobPayload): void {
+    this.store.enqueue(jobKey(payload), payload.type === "sweep" ? 1 : 2, JSON.stringify(payload));
   }
 
   /** Sets the alarm for the earliest due job (or `at`), unless an earlier alarm is already set. */
@@ -399,57 +264,25 @@ export class Hub extends DurableObject<Env> {
   }
 }
 
-/**
- * Replaces the invoker's "thinking…" with `content`, and `components`: menus under the content,
- * or, when they include more than action rows, a Components V2 message (the Manage panel, the one
- * the job came from or a new one), which has no content.
- */
-async function respond(
-  rest: DiscordRest,
-  job: CommandJob,
-  content: string,
-  given?: APIMessageTopLevelComponent[],
-): Promise<void> {
-  // A job from the Manage panel replaces that Components V2 message, which cannot take content.
-  const components = given ?? (job.panel ? [text(content)] : undefined);
-  const v2 = components?.some((component) => component.type !== ComponentType.ActionRow);
-  const body = v2
-    ? { flags: MessageFlags.IsComponentsV2, components }
-    : { content, ...(components ? { components } : {}) };
-  try {
-    await rest.patch<RESTPatchAPIWebhookWithTokenMessageResult, RESTPatchAPIWebhookWithTokenMessageJSONBody>(
-      Routes.webhookMessage(job.applicationId, job.token, "@original"),
-      { body: { ...body, allowed_mentions: { parse: [] } }, auth: false },
-    );
-  } catch (error) {
-    log.error("command follow-up failed", { interactionId: job.interactionId, ...errorFields(error) });
-  }
-}
-
-/** One job per key: a job queued again while it waits is not queued twice. */
 function jobKey(payload: JobPayload): string {
   switch (payload.type) {
-    case "command":
-      return `command:${payload.job.interactionId}`;
     case "sweep":
       return `sweep:${payload.accountId}`;
     case "queue":
       return "queue";
+    case "command":
+      return `command:${payload.job.interactionId}`;
+    case "answer":
+      return `answer:${payload.answerId}`;
     case "conversation":
       return `${payload.type}:${payload.accountId}:${payload.conversationId}`;
-    case "answer":
-      return answerKey(payload.answerId);
     case "message-updated":
       return `${payload.type}:${payload.accountId}:${payload.conversationId}:${payload.messageId}`;
   }
 }
 
 function requiredBudget(payload: JobPayload, settings: Settings): number {
-  if (payload.type === "command") return COMMAND_BUDGET;
   if (payload.type === "queue") return queueBudget(settings.config.accounts.length);
-  return payload.type === "sweep" ? 1 : MIN_BUDGET;
-}
-
-function answerKey(answerId: string): string {
-  return `answer:${answerId}`;
+  // A page of conversations, and one call per conversation in it.
+  return payload.type === "sweep" ? 1 + CONVERSATIONS_PER_PAGE : 1;
 }

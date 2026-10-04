@@ -179,16 +179,33 @@ async function withStore<T>(run: (store: Store) => Promise<T>): Promise<T> {
   });
 }
 
-/** What the Hub gives a job: services over one invocation's budget. */
+/** What a conversation's object gives a job: services over one invocation's budget. */
 function context(store: Store, settings: Settings, limit = settings.config.relay.subrequestBudget) {
   const budget = new Budget(limit);
   const chatwoot = chatwootClient(settings.config.chatwoot.baseUrl, "relay-token", budget.fetch);
   const rest = new DiscordRest("bot", budget.fetch);
   const forum = new DiscordForum(rest, store);
-  return { settings, store, forum, rest, budget, chatwoot, relay: relayFor(settings, forum, store) };
+  return {
+    settings,
+    store,
+    forum,
+    rest,
+    budget,
+    chatwoot,
+    relay: relayFor(settings, forum, store),
+    claimThread: claimIn(store),
+  };
 }
 
-/** Runs the conversation job until it is done, each run with a fresh budget, like the Hub does. */
+/** A post is claimed unless another conversation in the store has it, as the Hub decides. */
+function claimIn(store: Store) {
+  return async (accountId: number, conversationId: number, threadId: string) => {
+    const owner = store.ticketForThread(threadId);
+    return !owner || (owner.accountId === accountId && owner.conversationId === conversationId);
+  };
+}
+
+/** Runs the conversation job until it is done, each run with a fresh budget, like its object does. */
 async function sync(store: Store, settings: Settings, limit?: number): Promise<ProcessOutcome[]> {
   const outcomes: ProcessOutcome[] = [];
   for (let run = 0; run < 30; run += 1) {

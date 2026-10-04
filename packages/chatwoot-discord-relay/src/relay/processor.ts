@@ -21,7 +21,7 @@ import { fetchAvatarUrl } from "../discord/users.ts";
 import type { Store } from "../store.ts";
 import { mentionedUserIds } from "./format.ts";
 import { FINISH_REQUESTS, PAGE_REQUESTS, requestsPerMessage } from "./limits.ts";
-import { type ForumClient, Relay, type RelayStore } from "./relay.ts";
+import { type ForumClient, Relay, type RelayOptions, type RelayStore } from "./relay.ts";
 import { relayDerived } from "./updates.ts";
 
 const INBOX_CACHE_MS = 24 * 60 * 60 * 1000;
@@ -29,8 +29,11 @@ const AVATAR_CACHE_MS = 24 * 60 * 60 * 1000;
 /** After a failed avatar lookup, the agent's Chatwoot avatar is used this long before trying again. */
 const AVATAR_RETRY_MS = 60 * 60 * 1000;
 
+/** What the conversations share: the hourly triage budget and which conversation each post belongs to. */
+export type Shared = Pick<RelayOptions, "reserveTriage" | "claimThread">;
+
 /** The relay as configured by `settings`. */
-export function relayFor(settings: Settings, forum: ForumClient, store: RelayStore): Relay {
+export function relayFor(settings: Settings, forum: ForumClient, store: RelayStore, shared: Shared = {}): Relay {
   const triageUserId = settings.config.triage.userId;
   return new Relay({
     forum,
@@ -51,6 +54,7 @@ export function relayFor(settings: Settings, forum: ForumClient, store: RelaySto
     // Normally every message is relayed within the sweep's window (by its webhook, or else by
     // the sweep), so an older one is history: a first sync, or a catch-up after downtime.
     liveSeconds: settings.config.reconcile.lookbackSeconds,
+    ...shared,
   });
 }
 
@@ -62,6 +66,8 @@ export interface ProcessorContext {
   rest: DiscordRest;
   chatwoot: ChatwootClient;
   budget: Budget;
+  /** See RelayOptions.claimThread. */
+  claimThread(accountId: number, conversationId: number, threadId: string): Promise<boolean>;
 }
 
 /** "yield" means the invocation's request budget ran low; run again in a fresh invocation. */
@@ -86,9 +92,9 @@ export async function processConversation(
   }
   if (!relaysInbox(account, raw.inbox_id)) return "done";
   let conversation = toRelayConversation(conversationId, raw);
-  if (!store.conversation(accountId, conversationId)?.threadId) {
-    await recoverThread(context, accountId, account.forumChannelId, conversation);
-  }
+  const known = store.conversation(accountId, conversationId)?.threadId;
+  if (known) await context.claimThread(accountId, conversationId, known);
+  else await recoverThread(context, accountId, account.forumChannelId, conversation);
 
   const recorded = store.conversation(accountId, conversationId);
   let cursor = recorded?.cursor;
@@ -243,7 +249,7 @@ async function answeringReply(
  * account's forum and is not mapped to another conversation.
  */
 async function recoverThread(
-  { settings, store, forum }: ProcessorContext,
+  { settings, store, forum, claimThread }: ProcessorContext,
   accountId: number,
   forumChannelId: string,
   conversation: RelayConversation,
@@ -251,8 +257,8 @@ async function recoverThread(
   const attribute = settings.config.relay.linkAttribute;
   if (!attribute) return;
   const threadId = threadIdFromUrl(conversation.customAttributes[attribute]);
-  if (!threadId || store.ticketForThread(threadId)) return;
-  if (!(await forum.threadExists(forumChannelId, threadId))) return;
+  if (!threadId || !(await forum.threadExists(forumChannelId, threadId))) return;
+  if (!(await claimThread(accountId, conversation.id, threadId))) return;
   store.adoptThread(accountId, conversation.id, threadId);
   log.info("recovered post from conversation link", { accountId, conversationId: conversation.id, threadId });
 }

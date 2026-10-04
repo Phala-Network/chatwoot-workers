@@ -24,6 +24,11 @@ interface NotifierOptions {
   /** A message created longer ago than this is history. */
   liveSeconds: number;
   now: () => Date;
+  /**
+   * Counts a customer message `event` against the hourly budget shared by every conversation, once per event;
+   * false when the budget of `hour` is used up. Unset: counted in `store`.
+   */
+  reserveTriage?: ((hour: string, event: string) => Promise<boolean>) | undefined;
 }
 
 interface Notification {
@@ -55,12 +60,12 @@ export class Notifier {
   }
 
   /** The notification lines for a message; the same on every attempt at posting it. */
-  notification(message: RelayMessage): Notification {
+  async notification(message: RelayMessage): Promise<Notification> {
     if (!this.notifies(message)) return { lines: [], users: [] };
     // While a new assignee waits for their announcement, which pings them, do not ping twice.
     const ping = fromCustomer(message) && !this.newAssignee(message.account.id, message.conversation);
     const assignee = ping ? this.linkedAssignee(message.conversation) : undefined;
-    const triage = this.triage(message);
+    const triage = await this.triage(message);
     const mentions = [triage.mention, assignee].filter((id) => id !== undefined).map((id) => `<@${id}>`);
     const lines = [mentions.length > 0 ? `-# ${mentions.join(" ")}` : undefined, triage.note].filter(
       (line) => line !== undefined,
@@ -97,7 +102,7 @@ export class Notifier {
    * The triage bot mention for a customer message, or a note when a routing kind handled
    * it or the bot's hourly budget is used up.
    */
-  private triage(message: RelayMessage): { mention?: string; note?: string } {
+  private async triage(message: RelayMessage): Promise<{ mention?: string; note?: string }> {
     const { triage, store } = this.options;
     if (!fromCustomer(message)) return {};
     if (!triage) return {};
@@ -108,12 +113,18 @@ export class Notifier {
       const hour = this.options.now().toISOString().slice(0, 13);
       const key = `${message.account.id}:${message.conversation.id}`;
       if (store.increment(`triage:${key}:${hour}`) > triage.perConversationPerHour) return "conversation";
-      if (store.increment(`triage:${hour}`) > triage.perHour) return "hour";
-      return "mention";
+      return `hour:${hour}`;
     });
     if (decision === "answered") return { note: handledNote(triage) };
     if (decision === "conversation") return { note: conversationBudgetNote(triage) };
-    if (decision === "hour") return { note: hourlyBudgetNote(triage) };
+    const hour = decision.slice("hour:".length);
+    const event = `${account.id}:${message.id}`;
+    const reserve =
+      this.options.reserveTriage ??
+      (async () =>
+        store.once(`triage-hour:${event}`, () => (store.increment(`triage:${hour}`) <= triage.perHour ? "1" : "")) ===
+        "1");
+    if (!(await reserve(hour, event))) return { note: hourlyBudgetNote(triage) };
     return { mention: triage.userId };
   }
 

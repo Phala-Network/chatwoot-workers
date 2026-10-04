@@ -1,4 +1,4 @@
-// End to end through the Worker and the Hub Durable Object (alarms included), with Chatwoot and
+// End to end through the Worker and its Durable Objects (alarms included), with Chatwoot and
 // Discord faked at the fetch boundary.
 
 import {
@@ -24,6 +24,9 @@ import { ALICE, BOB, json, mockFetch, on, type Recorded, type Route, TRIAGE } fr
 const FORUM = "100000000000000055";
 const GUILD = "100000000000000044";
 const encoder = new TextEncoder();
+
+/** Conversations the tests used: their objects are drained and reset after each test. */
+const touched = new Set<number>();
 
 // Thread ids stay unique across tests: the Durable Object's storage persists within this file.
 let threadCounter = 10000;
@@ -74,6 +77,7 @@ class World {
     status = "open",
   ) {
     this.conversations.set(id, { id, status, custom_attributes, messages });
+    touched.add(id);
   }
 
   get requests(): Recorded[] {
@@ -224,6 +228,16 @@ function hub() {
   return env.HUB.getByName("global");
 }
 
+function conversationObject(id: number) {
+  touched.add(id);
+  return env.CONVERSATION.getByName(`3:${id}`);
+}
+
+/** The Hub and the objects of the tests' conversations. */
+function objects() {
+  return [hub(), ...[...touched].map((id) => env.CONVERSATION.getByName(`3:${id}`))];
+}
+
 async function call(request: Request): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(new Request<unknown, IncomingRequestCfProperties>(request), env, ctx);
@@ -323,13 +337,16 @@ async function signedInteraction(payload: unknown, timestampSeconds: number, tam
     });
 }
 
-function dueJobs(): Promise<number> {
-  return runInDurableObject(hub(), (_instance, state) => {
-    const row = state.storage.sql
-      .exec<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE not_before <= ?", Date.now())
-      .one();
-    return row.n;
-  });
+async function dueJobs(): Promise<number> {
+  let due = 0;
+  for (const object of objects())
+    due += await runInDurableObject(object, (_instance, state) => {
+      const row = state.storage.sql
+        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE not_before <= ?", Date.now())
+        .one();
+      return row.n;
+    });
+  return due;
 }
 
 /**
@@ -358,11 +375,12 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await drain();
-  await runInDurableObject(hub(), async (_instance, state) => {
-    state.storage.sql.exec("DELETE FROM jobs");
-    state.storage.sql.exec("DELETE FROM interactions");
-    await state.storage.deleteAlarm();
-  });
+  for (const object of objects())
+    await runInDurableObject(object, async (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM jobs");
+      state.storage.sql.exec("DELETE FROM interactions");
+      await state.storage.deleteAlarm();
+    });
   vi.restoreAllMocks();
 });
 
@@ -555,10 +573,7 @@ describe("worker", () => {
     await drain();
 
     // Make the backed-off job due now instead of waiting.
-    await runInDurableObject(hub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE jobs SET not_before = 0");
-    });
-    await setAlarmNow();
+    await makeJobsDue();
     await drain();
     const replies = world.webhookPosts().filter((post) => post.thread);
     expect(replies.map((post) => post.body.content)).toEqual([
@@ -666,10 +681,7 @@ describe("worker", () => {
     world.failPatches = 1;
     await chatwootWebhook(created(19));
     await drain();
-    await runInDurableObject(hub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE jobs SET not_before = 0");
-    });
-    await setAlarmNow();
+    await makeJobsDue();
     await drain();
     expect(world.webhookPosts().map((post) => post.body.content)).toEqual([
       expect.stringContaining("Open in Chatwoot"),
@@ -1095,12 +1107,12 @@ describe("worker", () => {
     await drain();
     expect(world.webhookPosts()).toEqual([]);
 
-    await runInDurableObject(hub(), (_instance, state) => {
+    await runInDurableObject(conversationObject(31), async (_instance, state) => {
       state.storage.sql.exec("UPDATE jobs SET attempts = 20, not_before = 0 WHERE key = 'conversation:3:31'");
+      await state.storage.setAlarm(Date.now());
     });
-    await setAlarmNow();
     await drain();
-    const due = await runInDurableObject(hub(), (_instance, state) =>
+    const due = await runInDurableObject(conversationObject(31), (_instance, state) =>
       state.storage.sql
         .exec<{ not_before: number }>("SELECT not_before FROM jobs WHERE key = 'conversation:3:31'")
         .one(),
@@ -1109,10 +1121,10 @@ describe("worker", () => {
 
     // Once Chatwoot answers again, the retry relays the message.
     world.failConversations = 0;
-    await runInDurableObject(hub(), (_instance, state) => {
+    await runInDurableObject(conversationObject(31), async (_instance, state) => {
       state.storage.sql.exec("UPDATE jobs SET not_before = 0 WHERE key = 'conversation:3:31'");
+      await state.storage.setAlarm(Date.now());
     });
-    await setAlarmNow();
     await drain();
     expect(world.webhookPosts().at(-1)?.body.content).toBe("hello\n-# <@100000000000000777>");
     const posts = world.webhookPosts();
@@ -1132,7 +1144,7 @@ describe("worker", () => {
     expect(reads()).toBe(before); // up to date: not queued
 
     // A post from before cards gets its card.
-    await runInDurableObject(hub(), (_instance, state) => {
+    await runInDurableObject(conversationObject(32), (_instance, state) => {
       state.storage.sql.exec("UPDATE conversations SET card_id = NULL WHERE conversation_id = 32");
     });
     const cards = world.cards().length;
@@ -1141,7 +1153,7 @@ describe("worker", () => {
     expect(world.cards()).toHaveLength(cards + 1);
 
     // A card left covered (its move failed) is moved.
-    await runInDurableObject(hub(), (_instance, state) => {
+    await runInDurableObject(conversationObject(32), (_instance, state) => {
       state.storage.sql.exec("UPDATE conversations SET card_covered = 1 WHERE conversation_id = 32");
     });
     await sweep();
@@ -1157,23 +1169,7 @@ describe("worker", () => {
     });
   });
 
-  it("gives a post from before cards its card, however long ago its ticket was active", async () => {
-    world.conversation(34, [{ id: 3401, content: "hello", message_type: 0 }]);
-    await chatwootWebhook(created(34));
-    await drain();
-    const quiet = world.conversations.get(34);
-    if (quiet) quiet.lastActivityAt = Math.floor(Date.now() / 1000) - 7 * 24 * 3600;
-    await runInDurableObject(hub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE conversations SET card_id = NULL WHERE conversation_id = 34");
-    });
-    const cards = world.cards().length;
-    await sweep();
-    expect(world.cards()).toHaveLength(cards + 1);
-    await sweep();
-    expect(world.cards()).toHaveLength(cards + 1);
-  });
-
-  it("runs a command that comes during a sweep before the sweep's next page", async () => {
+  it("runs a command at once, while the sweep still waits for Chatwoot", async () => {
     const thread = "100000000000030036";
     await runInDurableObject(hub(), (_instance, state) => {
       state.storage.sql.exec(
@@ -1224,22 +1220,110 @@ describe("worker", () => {
       member: { user: { id: ALICE } },
       data: { type: 1, name: "resolve" },
     });
+    await vi.waitFor(() => expect(world.sent("POST", /\/toggle_status$/)).toHaveLength(1));
     release();
     await drain();
+    expect(world.requests.filter(isPage).map((request) => request.url.searchParams.get("page"))).toEqual([
+      "1",
+      "2",
+      "3",
+      "4",
+    ]);
+  });
 
-    const order = world.requests
-      .filter((request) => isPage(request) || request.url.pathname.endsWith("/toggle_status"))
-      .map((request) => (isPage(request) ? `page ${request.url.searchParams.get("page")}` : "command"));
-    expect(order).toEqual(["page 1", "command", "page 2", "page 3", "page 4"]);
+  it("runs a command in one conversation while another conversation waits for Chatwoot", async () => {
+    const thread = "100000000000030038";
+    await runInDurableObject(hub(), (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO conversations (account_id, conversation_id, thread_id, cursor) VALUES (3, 38, ?, 0)",
+        thread,
+      );
+    });
+    let release = () => {};
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = on("GET", "chatwoot.example.com/api/v1/accounts/3/conversations/39", async () => {
+      await paused;
+      return json({ message: "Not found" }, { status: 404 });
+    });
+    const profile = on("GET", "chatwoot.example.com/api/v1/profile", () =>
+      json({ id: 42, name: "Alice", email: "alice@example.com", accounts: [{ id: 3 }] }),
+    );
+    const toggle = on("POST", "chatwoot.example.com/api/v1/accounts/3/conversations/38/toggle_status", () => json({}));
+    world.mock.spy.mockRestore();
+    world = new World([slow, profile, toggle]);
+    world.conversation(38, [], {}, "resolved");
+    await chatwootWebhook(created(39));
+    await vi.waitFor(() => expect(world.sent("GET", /\/conversations\/39$/)).toHaveLength(1));
+
+    await discordInteraction({
+      id: "900019",
+      application_id: "100000000000000001",
+      token: "interaction-token",
+      type: 2,
+      channel_id: thread,
+      channel: { id: thread, type: 11 },
+      member: { user: { id: ALICE } },
+      data: { type: 1, name: "resolve" },
+    });
+    await vi.waitFor(() =>
+      expect(world.requests.some((request) => request.url.pathname.endsWith("original"))).toBe(true),
+    );
+    expect(world.sent("POST", /\/toggle_status$/)).toHaveLength(1);
+    // Conversation 38's post follows the change, still without waiting for conversation 39.
+    await vi.waitFor(() =>
+      expect(world.sent("PATCH", new RegExp(`^/api/v10/channels/${thread}$`))).not.toHaveLength(0),
+    );
+    release();
+    await drain();
+  });
+
+  it("takes over what an earlier version's Hub recorded about a conversation", async () => {
+    const thread = "100000000000030040";
+    await runInDurableObject(hub(), (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO conversations (account_id, conversation_id, thread_id, cursor, state, card_id) VALUES (3, 140, ?, 4002, ?, ?)",
+        thread,
+        "[]",
+        "100000000000004099",
+      );
+      const part =
+        "INSERT INTO posted_messages (account_id, conversation_id, message_id, part, discord_message_id) VALUES (3, 140, 4002, ?, ?)";
+      state.storage.sql.exec(part, 0, "100000000000004021");
+      state.storage.sql.exec(part, 1, "100000000000004022");
+    });
+    world.conversation(140, [
+      { id: 4001, content: "first", message_type: 0 },
+      { id: 4002, content: "This message was deleted", message_type: 1, content_attributes: { deleted: true } },
+    ]);
+    world.threads.set(thread, FORUM);
+    await chatwootWebhook({
+      ...created(140),
+      event: "message_updated",
+      id: 4002,
+      content_attributes: { deleted: true },
+    });
+    await drain();
+    // The Discord messages the earlier version posted for the deleted message are removed from its post.
+    const deletes = world.sent("DELETE", /^\/api\/v10\/webhooks\/1\/tok\/messages\//);
+    expect(deletes.map((request) => request.url.pathname.split("/").at(-1))).toEqual([
+      "100000000000004021",
+      "100000000000004022",
+    ]);
+    expect(deletes.every((request) => request.url.searchParams.get("thread_id") === thread)).toBe(true);
+    // Its post is still found for commands, and nothing was posted again.
+    expect(await hub().ticketForThread(thread)).toEqual({ accountId: 3, conversationId: 140 });
+    expect(world.webhookPosts().filter((post) => !post.thread)).toEqual([]);
   });
 
   it("a sweep longer than a run's page limit continues where it stopped, down to its window's start", async () => {
     const start = Math.floor(Date.now() / 1000);
-    // 11 pages of recent conversations; only the last one is behind (a message never relayed).
+    // 3 pages of recent conversations, one per run; only the last one is behind (a message never relayed).
     const busy = on("GET", "chatwoot.example.com/api/v1/accounts/3/conversations", (request) => {
       const page = Number(request.url.searchParams.get("page"));
       const payload =
-        page > 11
+        page > 3
           ? []
           : Array.from({ length: 25 }, (_, index) => {
               const id = 50000 + (page - 1) * 25 + index;
@@ -1247,7 +1331,7 @@ describe("worker", () => {
                 id,
                 status: "open",
                 last_activity_at: start - id + 50000,
-                messages: id === 50274 ? [{ id: 1 }] : [],
+                messages: id === 50074 ? [{ id: 1 }] : [],
               };
             });
       return json({ data: { meta: {}, payload } });
@@ -1258,12 +1342,14 @@ describe("worker", () => {
     const pages = world
       .sent("GET", /^\/api\/v1\/accounts\/3\/conversations$/)
       .map((request) => Number(request.url.searchParams.get("page")));
-    expect(pages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-    expect(world.sent("GET", /^\/api\/v1\/accounts\/3\/conversations\/50274$/).length).toBeGreaterThan(0);
+    expect(pages).toEqual([1, 2, 3, 4]);
+    await vi.waitFor(() =>
+      expect(world.sent("GET", /^\/api\/v1\/accounts\/3\/conversations\/50074$/).length).toBeGreaterThan(0),
+    );
   });
 
-  it.each(["status", "sweep"])(
-    "holds one pending conversation job without polling and releases it through %s",
+  it.each(["status", "recheck"])(
+    "holds a pending conversation job, rechecking it every few minutes, and releases it through %s",
     async (wake) => {
       const id = wake === "status" ? 77 : 78;
       world = new World();
@@ -1273,22 +1359,22 @@ describe("worker", () => {
       await vi.waitFor(
         async () => {
           await drain();
-          await runInDurableObject(hub(), async (_instance, state) => {
-            expect(await state.storage.getAlarm()).toBeNull();
+          await runInDurableObject(conversationObject(id), async (_instance, state) => {
+            expect(((await state.storage.getAlarm()) ?? 0) - Date.now()).toBeGreaterThan(4 * 60 * 1000);
           });
         },
         { timeout: 5000 },
       );
       expect(world.webhookPosts()).toEqual([]);
-      await runInDurableObject(hub(), async (_instance, state) => expect(await state.storage.getAlarm()).toBeNull());
       const conversation = world.conversations.get(id);
       if (!conversation) throw new Error("Test conversation missing");
       conversation.status = "open";
       if (wake === "status") {
         await chatwootWebhook({ event: "conversation_status_changed", id, account: { id: 3 } });
       } else {
-        conversation.lastActivityAt = 1; // Far outside the relay's ordinary activity window.
-        await sweep();
+        // Outside the sweep's window too: the conversation's own recheck finds the turn ended.
+        conversation.lastActivityAt = 1;
+        await makeJobsDue();
       }
       await vi.waitFor(
         () =>
@@ -1355,14 +1441,15 @@ describe("worker", () => {
         index + 2 === reply.id ? reply : { id: index + 2, content: "Activity", message_type: 2 },
       ),
     ]);
-    await runInDurableObject(hub(), async (_instance, state) => {
+    await runInDurableObject(conversationObject(id), async (_instance, state) => {
       const store = new Store(state.storage.sql);
       const settings = await loadSettings(env);
       const budget = new Budget(minimumBudget(4));
       const chatwoot = chatwootClient(settings.config.chatwoot.baseUrl, "relay-token", budget.fetch);
       const rest = new DiscordRest("test-bot-token", budget.fetch);
       const forum = new DiscordForum(rest, store);
-      const services = { settings, store, budget, chatwoot, rest, forum, relay: relayFor(settings, forum, store) };
+      const relay = relayFor(settings, forum, store);
+      const services = { settings, store, budget, chatwoot, rest, forum, relay, claimThread: async () => true };
       expect(await processConversation(services, 3, id)).toBe("yield");
     });
     expect(world.webhookPosts()).toEqual([]);
@@ -1470,21 +1557,23 @@ async function sweep(): Promise<void> {
 
 /** How long until a queued job is due. */
 function jobDelay(key: string): Promise<number> {
-  return runInDurableObject(hub(), (_instance, state) => {
+  return runInDurableObject(conversationObject(Number(key.split(":").at(-1))), (_instance, state) => {
     const row = state.storage.sql.exec<{ at: number }>("SELECT not_before AS at FROM jobs WHERE key = ?", key).one();
     return row.at - Date.now();
   });
 }
 
 async function makeJobsDue(): Promise<void> {
-  await runInDurableObject(hub(), (_instance, state) => {
-    state.storage.sql.exec("UPDATE jobs SET not_before = 0");
-  });
+  for (const object of objects())
+    await runInDurableObject(object, (_instance, state) => {
+      state.storage.sql.exec("UPDATE jobs SET not_before = 0");
+    });
   await setAlarmNow();
 }
 
 async function setAlarmNow(): Promise<void> {
-  await runInDurableObject(hub(), async (_instance, state) => {
-    await state.storage.setAlarm(Date.now());
-  });
+  for (const object of objects())
+    await runInDurableObject(object, async (_instance, state) => {
+      await state.storage.setAlarm(Date.now());
+    });
 }
