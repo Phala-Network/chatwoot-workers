@@ -79,14 +79,16 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
 - **Work from the post.** The card's buttons and [commands](#commands-and-buttons) run in Chatwoot with the
   agent's own access token, so Chatwoot's permissions and audit trail apply. Talking in a post never reaches the
   customer; only commands do.
-- **AI drafts, humans send.** A customer message on an open ticket that nobody has answered yet mentions the
-  triage bot set in `triage.userId`, within hourly budgets. The bot answers in the post with a draft, and a human
+- **AI drafts, humans send.** A live customer message on an open ticket that no public reply has answered yet
+  mentions the triage bot set in `triage.userId`, within hourly budgets; history relayed later, automatic email,
+  and resolved or snoozed tickets stay silent ([Internals](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/internals.md#chatwoot-contracts)). The bot answers in the post with a draft, and a human
   sends it with **Reply with draft** or **Apps → Reply with this**. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md).
 - **Pings.** Live customer messages ping the linked assignee. An agent bot is never a person: a ticket assigned
   to one shows as Unassigned.
 - **AI triage.** With [chatwoot-router](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router),
-  a ticket is the inbox bot's while it is pending. Its customer messages are held until the bot's turn ends, then
-  posted; `/pending` hands a ticket back to the bot ([routing](#routing)).
+  a ticket is the inbox bot's while it is pending. When the inbox is linked to a bot, a pending ticket's customer
+  messages are held until the bot's turn ends, then posted; `/pending` hands a ticket back to the bot
+  ([routing](#routing)).
 - **Support queue.** Optionally, every hour a message lists the tickets waiting for a reply or an assignee
   ([support queue](#support-queue)).
 
