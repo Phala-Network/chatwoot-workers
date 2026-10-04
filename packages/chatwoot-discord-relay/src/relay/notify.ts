@@ -117,6 +117,9 @@ export class Notifier {
     });
     if (decision === "answered") return { note: handledNote(triage) };
     if (decision === "conversation") return { note: conversationBudgetNote(triage) };
+    // Decided by an earlier version, which counted the hourly budget in its own store.
+    if (decision === "hour") return { note: hourlyBudgetNote(triage) };
+    if (decision === "mention") return { mention: triage.userId };
     const hour = decision.slice("hour:".length);
     const event = `${account.id}:${message.id}`;
     const reserve =

@@ -128,6 +128,7 @@ export interface ConversationExport {
   responses: Record<string, SqlStorageValue>[];
   /** The conversation's hourly triage counts. */
   counters: Record<string, SqlStorageValue>[];
+  decisions: Record<string, SqlStorageValue>[];
   draft?: { answerId: string; text: string };
 }
 
@@ -297,8 +298,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
       this.sql.exec(`SELECT * FROM ${table} ${where}`, accountId, conversationId).toArray();
     const [row] = rows("conversations");
     if (!row) return undefined;
-    // Its own object gives the post a card from now on (see takePostsWithoutCard).
-    this.set(`card-backfill:${accountId}:${conversationId}`, "1");
     const answerId = typeof row.answer_id === "string" ? row.answer_id : undefined;
     const draft = answerId === undefined ? undefined : this.get(`answer:${answerId}`);
     return {
@@ -309,6 +308,9 @@ export class Store extends QueueStore implements RelayStore, Cache {
       counters: this.sql
         .exec("SELECT * FROM counters WHERE name LIKE ?", `triage:${accountId}:${conversationId}:%`)
         .toArray(),
+      // Triage decisions of the last hours, keyed by message (Notifier): the account's, as a message's
+      // conversation is not recorded. Each is kept: a message not yet relayed keeps its decision.
+      decisions: this.sql.exec("SELECT * FROM cache WHERE key LIKE ?", `triage:${accountId}:%`).toArray(),
       ...(answerId !== undefined && draft !== undefined ? { draft: { answerId, text: draft } } : {}),
     };
   }
@@ -327,6 +329,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
     for (const row of data.derived) insert("derived_messages", row);
     for (const row of data.responses) insert("submitted_responses", row);
     for (const row of data.counters) insert("counters", row);
+    for (const row of data.decisions) insert("cache", row);
     if (data.draft) this.set(`answer:${data.draft.answerId}`, data.draft.text, draftTtlMs);
   }
 

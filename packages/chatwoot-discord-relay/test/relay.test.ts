@@ -401,6 +401,22 @@ describe("Relay", () => {
     expect(second[0]).toMatch(/Triage bot not called: more than 1 customer messages in this conversation/);
   });
 
+  it("keeps a triage decision an earlier version made for a message it could not post", async () => {
+    let store: MemoryStore;
+    ({ relay, forum, store } = relayWith({ triage: { ...triage, perConversationPerHour: 1 } }));
+    // Taken over from the Hub: the message was counted, and the bot was to be called.
+    store.decisions.set("triage:3:203", "mention");
+    store.counters.set(`triage:3:12:${NOW.toISOString().slice(0, 13)}`, 1);
+    await relay.relay(message({ id: 203, content: "third" }));
+    expect(forum.contents().at(-1)).toBe(`third\n-# <@${TRIAGE}>`);
+    // Over the hourly budget then: it stays uncalled.
+    store.decisions.set("triage:3:204", "hour");
+    await relay.relay(message({ id: 204, content: "fourth" }));
+    expect(forum.contents().at(-1)).toMatch(
+      /^fourth\n-# Triage bot not called: more than 30 customer messages this hour/,
+    );
+  });
+
   it("caps very long messages with a link to the full text", async () => {
     const text = `${"x".repeat(1900)}\n`.repeat(10);
     await relay.relay(message({ content: text }));

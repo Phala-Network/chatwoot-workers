@@ -34,7 +34,7 @@ const id = z.number().int().positive();
 const payloadSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("sweep"), accountId: id }),
   z.object({ type: z.literal("queue") }),
-  // Jobs an earlier version queued here; each goes to its conversation's object.
+  // Jobs for a conversation (queued by an earlier version, or by the sweep); each goes to its object.
   z.object({ type: z.literal("command"), job: commandJobSchema }),
   z.object({ type: z.literal("conversation"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("message-updated"), accountId: id, conversationId: id, messageId: id }),
@@ -44,7 +44,7 @@ type JobPayload = z.infer<typeof payloadSchema>;
 
 const sweepPassSchema = z.object({ cutoff: z.number(), page: z.number().int().positive(), startedAt: z.number() });
 const PASS_TTL_MS = 24 * 60 * 60 * 1000;
-/** Posts without a card a sweep hands over at most, and how long before one is handed over again. */
+/** Posts without a card a sweep takes at most, and how long before one not yet handed over is taken again. */
 const CARD_BACKFILL_PER_SWEEP = 10;
 const CARD_BACKFILL_RETRY_MS = 24 * 60 * 60 * 1000;
 /** Stop draining and continue in a new invocation after this long. */
@@ -212,21 +212,23 @@ export class Hub extends DurableObject<Env> {
         : [],
     );
     for (const _ of relayed) budget.consume();
-    // A conversation that cannot take it now is handed over again by the next pass, which starts where this one did.
     const results = await Promise.allSettled(
       relayed.map(({ conversationId, conversation }) =>
         conversationStub(this.env, accountId, conversationId).reconcile(accountId, conversationId, conversation),
       ),
     );
     results.forEach((result, index) => {
-      if (result.status === "rejected")
-        log.warn("sweep could not hand over a conversation", {
-          accountId,
-          conversationId: relayed[index]?.conversationId,
-          ...errorFields(result.reason),
-        });
+      const conversationId = relayed[index]?.conversationId;
+      if (result.status === "fulfilled" || conversationId === undefined) return;
+      // Handed over by a job that retries until it succeeds, so the window moving on cannot lose it.
+      log.warn("sweep could not hand over a conversation", {
+        accountId,
+        conversationId,
+        ...errorFields(result.reason),
+      });
+      this.enqueue({ type: "conversation", accountId, conversationId });
     });
-    if (pass.page === 1) await this.backfillCards(accountId, budget);
+    if (pass.page === 1) this.backfillCards(accountId);
     const seen = relayed.length;
     if (reachedCutoff) {
       // The next pass covers list movement while this pass ran.
@@ -239,8 +241,17 @@ export class Hub extends DurableObject<Env> {
     }
   }
 
-  /** A job an earlier version queued here, given to its conversation's object. */
+  /**
+   * A conversation's job, queued here by an earlier version or by the sweep, given to its
+   * conversation's object, which from then on also gives its post a card (see backfillCards).
+   */
   private async handOver(job: Job, payload: Exclude<JobPayload, { type: "sweep" | "queue" }>): Promise<void> {
+    const ticket = payload.type === "command" ? payload.job : payload;
+    await this.handOverJob(job, payload);
+    this.store.set(`card-backfill:${ticket.accountId}:${ticket.conversationId}`, "1");
+  }
+
+  private async handOverJob(job: Job, payload: Exclude<JobPayload, { type: "sweep" | "queue" }>): Promise<void> {
     if (payload.type === "command") {
       const command: CommandJob = payload.job;
       await conversationStub(this.env, command.accountId, command.conversationId).enqueueCommand(
@@ -270,14 +281,15 @@ export class Hub extends DurableObject<Env> {
   /**
    * Hands a few of the account's posts that an earlier version left without a card (from before
    * cards), and whose ticket is not resolved, to their conversations, however long ago their last
-   * activity, each at most once a day.
+   * activity: by jobs that retry until they succeed, each taken again daily until one does.
    */
-  private async backfillCards(accountId: number, budget: Budget): Promise<void> {
-    const ids = this.store.takePostsWithoutCard(accountId, CARD_BACKFILL_PER_SWEEP, CARD_BACKFILL_RETRY_MS);
-    for (const conversationId of ids) {
-      budget.consume();
-      await conversationStub(this.env, accountId, conversationId).enqueueConversation(accountId, conversationId);
-    }
+  private backfillCards(accountId: number): void {
+    for (const conversationId of this.store.takePostsWithoutCard(
+      accountId,
+      CARD_BACKFILL_PER_SWEEP,
+      CARD_BACKFILL_RETRY_MS,
+    ))
+      this.enqueue({ type: "conversation", accountId, conversationId });
   }
 
   private enqueue(payload: JobPayload): void {
@@ -312,6 +324,6 @@ function jobKey(payload: JobPayload): string {
 
 function requiredBudget(payload: JobPayload, settings: Settings): number {
   if (payload.type === "queue") return queueBudget(settings.config.accounts.length);
-  // A page of conversations, one call per conversation in it, and the posts without a card.
-  return payload.type === "sweep" ? 1 + CONVERSATIONS_PER_PAGE + CARD_BACKFILL_PER_SWEEP : 1;
+  // A page of conversations, and one call per conversation in it.
+  return payload.type === "sweep" ? 1 + CONVERSATIONS_PER_PAGE : 1;
 }
