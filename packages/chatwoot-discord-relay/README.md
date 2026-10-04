@@ -71,91 +71,39 @@ Discord ─/command───▶ Worker ──▶ Conversation Durable Object ─
 Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: hands missed conversations to their objects
 ```
 
-Each conversation has its own Durable Object, so one slow conversation never delays another, and a
-command runs next in its conversation, ahead of that conversation's background work. The Hub only knows which
-conversation each post belongs to, counts the triage bot's hourly budget, and runs the sweep and
-the support queue.
-
-- Each conversation gets one forum post, titled `[<Account> #<id>] <customer> — <subject or first message>`.
-  It opens with a ticket header (channel, inbox, customer email, phone number on phone channels,
-  "Open in Chatwoot" link), every message follows under its sender's name (customers, agents,
-  🔒 private notes, activity lines), and it ends with the ticket's card: its status, assignee, and
-  labels, with buttons to act on it. [How conversations are relayed](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/relay.md) has the details.
-- Forum tags follow the conversation: account, status (`Open`, `Pending`, `Snoozed`,
-  `Resolved`), assignee or `Unassigned`, topic, priority, and labels. Resolved posts are archived.
-- Agents act inside the post with the card's buttons or with [commands](#commands-and-buttons)
-  such as `/reply`, `/note`, and `/resolve`. Each runs in Chatwoot with the agent's own access
-  token, so Chatwoot's permissions and audit trail apply. Talking in a post never reaches the
+- **One post per conversation.** Its title is `[<Account> #<id>] <customer> — <subject or first message>`. It
+  opens with a ticket header (channel, inbox, customer contact, "Open in Chatwoot"), every message follows under
+  its sender's name (customers, agents, 🔒 private notes, activity lines), and it ends with the ticket's card:
+  status, assignee and labels, with buttons. Forum tags follow the conversation (account, status, assignee,
+  topic, priority, labels); resolved posts are archived. [How conversations are relayed](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/relay.md) has the details.
+- **Work from the post.** The card's buttons and [commands](#commands-and-buttons) run in Chatwoot with the
+  agent's own access token, so Chatwoot's permissions and audit trail apply. Talking in a post never reaches the
   customer; only commands do.
-- A customer message on a pending conversation with a linked inbox bot is held before posting, in the existing
-  deduplicated conversation job. The status webhook and five-minute sweep wake it; one 1-second re-read covers
-  a racing webhook, then the job waits without polling. Sweep wakes held jobs even outside the normal lookback.
-  A fresh read releases the message when the conversation leaves pending or the bot is disconnected.
-- Live customer messages ping the linked human assignee. Bots are never people: `assignee_type: AgentBot` shows
-  as Unassigned, without a human tag or ping, even when its id matches a user's. For open conversations only,
-  an optional Discord triage bot is mentioned when no qualifying public reply follows that customer's message.
-  A reply must be outgoing, public, undeleted, not failed, not a template (greeting/out-of-office), and not an
-  automatic email. Bot and human replies both count, including replies after a message outside Jev's input window.
-  Resolved/snoozed messages get no triage mention. Answer scans persist only their pagination cursor across alarm
-  budgets; the final page or the page containing an answer is re-read on resume. Receiving `message_updated`
-  for an outgoing reply invalidates unfinished scans immediately and wakes their conversation job, including
-  a failed reply retried as sent on an already-scanned middle page. An in-flight read cannot restore an invalidated
-  cursor. Ordinary budget yields retain progress; updates require a fresh scan. Once decided, notification eligibility
-  and hourly budgets are recorded per message, so Discord retries keep the same notification/source association.
-  History and automatic customer email stay silent. A later delivery failure produces the existing notice without
-  retrospective triage after the notification decision.
-- Answer detection is best effort if an update webhook is lost. Chatwoot sends account webhooks once without
-  retry. If a failed reply on an already-scanned page becomes sent and its `message_updated` is lost, the unfinished
-  scan can miss that answer. The sweep retains the scan cursor, so requeuing the conversation does not recover
-  the skipped update, even before the first Discord post. Chatwoot's messages API exposes current state by message
-  ID, not changes since the last read: the retry keeps the same ID, and there is no update cursor for skipped pages.
-  Rereading the reply would show its new status, but the resumed scan has no signal to do so. The customer message
-  is still relayed; the impact is at most one extra triage call per affected customer message, within the existing
-  notification budgets. Its recorded notification decision is not revised retrospectively.
-- A human sends the proposed draft with **Reply with draft** or **Apps → Reply with this**. `/pending` assigns
-  the current inbox's account bot with `assignee_type: AgentBot`, clearing the person and starting a pending turn;
-  in an unlinked inbox it uses ordinary pending status. Manage preserves labels in `router.keepLabels`.
-- Optionally, every hour a message lists the tickets waiting for a reply or without an assignee,
-  pings their assignees, and escalates long-unassigned ones to a role ([support queue](#support-queue)). Pending
-  tickets show 🤖 without pings/escalation, using the existing wait-age calculation; there is no pending timeout.
-- Optionally, the separate [chatwoot-router](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router)
-  Worker assigns a new ticket's owner and topic through TypeSafe's System One API ([routing](#routing)).
-
-These contracts use Chatwoot v4.18.0's
-[typed assignment](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/services/conversations/assignment_service.rb),
-[assignee presenter](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/presenters/conversations/event_data_presenter.rb),
-[message types/reopen behavior](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/models/message.rb),
-[reply retries](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/controllers/api/v1/accounts/conversations/messages_controller.rb),
-[update webhooks](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/listeners/webhook_listener.rb),
-[webhook delivery](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/lib/webhooks/trigger.rb), and
-[message paging](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/finders/message_finder.rb).
+- **AI drafts, humans send.** A customer message on an open ticket that nobody has answered yet mentions the
+  triage bot set in `triage.userId`, within hourly budgets. The bot answers in the post with a draft, and a human
+  sends it with **Reply with draft** or **Apps → Reply with this**. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md).
+- **Pings.** Live customer messages ping the linked assignee. An agent bot is never a person: a ticket assigned
+  to one shows as Unassigned.
+- **AI triage.** With [chatwoot-router](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router),
+  a ticket is the inbox bot's while it is pending. Its customer messages are held until the bot's turn ends, then
+  posted; `/pending` hands a ticket back to the bot ([routing](#routing)).
+- **Support queue.** Optionally, every hour a message lists the tickets waiting for a reply or an assignee
+  ([support queue](#support-queue)).
 
 Design choices:
 
-- **Chatwoot stays the system of record.** Customers, channels, history, and CSAT live in
-  Chatwoot; Discord is where the team, people and bots alike, works. One post per conversation
-  gives humans and an AI agent the whole ticket in one thread. Links work both ways, for machines
-  too: the post URL is stored in the conversation's link attribute (`relay.linkAttribute`, default
-  `discord_thread`), so anything that reads Chatwoot's API (for example a queue digest) can link
-  to the post; the ticket header links back to Chatwoot.
-- **An AI agent joins without code changes.** Each eligible unanswered customer message ends with a literal
-  `<@bot>` mention of the bot set in `triage.userId`. Discord bots commonly react to other bots'
-  messages only when mentioned inline, so the agent wakes up for customer messages and nothing
-  else: agent replies, private notes, and activity lines carry no mention. The relay's
-  `allowed_mentions` suppresses the notification, so the token pings no human. See
-  [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md).
-- **The AI drafts, humans send.** The agent writes its proposed reply as the last fenced code
-  block of its answer. A human opens the reply editor prefilled with it, edits if needed, and
-  submits.
-- **Cost and abuse are bounded.** At most `triage.perConversationPerHour` (5) customer messages
-  per conversation and `triage.perHour` (30) in total call the agent each hour; beyond that a
-  visible note replaces the mention, as it does on a customer message a routing kind's reply
-  already answered. Messages from blocked contacts are never relayed.
-- **Reliable by construction.** Chatwoot sends each webhook once, without retry, so webhooks are
-  only triggers: the Worker queues the work durably in the conversation's Durable Object, which reads
-  Chatwoot's API and retries failed work until it succeeds; a sweep every 5 minutes finds missed messages and
-  conversation state
-  ([Internals](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/internals.md) says what the sweep does not cover).
+- **Chatwoot stays the system of record.** Discord is where the team, people and bots alike, works. The post URL
+  is stored in the conversation's link attribute (`relay.linkAttribute`, default `discord_thread`), and the
+  header links back to Chatwoot.
+- **An AI agent joins without code changes.** The mention is a literal `<@bot>` with notifications suppressed, so
+  a Discord bot that reacts to mentions wakes up for customer messages and nothing else.
+- **Cost and abuse are bounded.** At most `triage.perConversationPerHour` customer messages per conversation and
+  `triage.perHour` in total call the bot each hour; beyond that a visible note replaces the mention. Messages from
+  blocked contacts are never relayed.
+- **Reliable and isolated.** Chatwoot sends each webhook once, without retry, so webhooks are only triggers: the
+  conversation's own Durable Object reads Chatwoot's API and retries until it succeeds, and a sweep every 5 minutes
+  finds what a missed webhook left out. One slow conversation never delays another, and a command runs next in
+  its conversation. [Internals](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/internals.md) has the guarantees and their limits.
 
 ## Deploy
 
@@ -416,43 +364,21 @@ Worker secrets, never in the configuration, also validated at startup:
 
 ## Routing
 
-The router calls TypeSafe's System One API (`/v1/systemone`) with the model in its `routing.model` setting
-(Jev by default). System One is TypeSafe's class of decision models; Jev is its first model. The router's
-`routing.endpoint` may point to another deployment of that API, for example a proxy or gateway.
+[chatwoot-router](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router) is a
+separate Worker that runs as each account's native Chatwoot agent bot and routes new tickets with TypeSafe's
+System One API (Jev). The two Workers coordinate only through Chatwoot's status: a ticket is the bot's while it is
+pending, and people's otherwise.
 
-[chatwoot-router](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router) runs as each account's native Chatwoot brand bot. The relay
-uses Chatwoot's inbox-bot association and pending status automatically; it needs neither bot credentials nor
-custom routing attributes. `GET inboxes/{id}/agent_bot` is scoped to the account/inbox and validated for that
-account. An unlinked inbox has no bot; the endpoint does not expose the association's active flag, so disconnect
-it to disable holding. The relay's user token must see every relayed inbox. The bot webhook belongs to the router;
-the relay keeps its own account webhook, including `conversation_status_changed`.
+The relay needs no bot credentials. It finds an inbox's bot with Chatwoot's `GET inboxes/{id}/agent_bot` (its
+user token must see every relayed inbox) and holds a customer message while that bot's ticket is pending. The
+message is posted once the turn ends: at once on the status webhook, or by the conversation's own recheck every
+five minutes. Disconnecting the inbox's bot ends the holding. The relay keeps its own account webhook, including
+`conversation_status_changed`. List the router's kind labels in `router.keepLabels`, so **Manage** keeps them
+when it sets a topic.
 
-The [How it works](#how-it-works) rules define pending holding and answering replies. A greeting stays in
-Chatwoot until the bot's turn ends. There is no per-message wait timeout. Router processing failures select
-handoff after three attempts, while Worker delivery failures use Chatwoot's fallback unless that account enables
-`keep_pending_on_bot_failure`. A native error fallback may leave open plus a bot assignee; the relay treats it as
-unassigned for normal triage/queue handling; the router releases the remaining bot assignment on a job or sweep. A permission or service failure needs repair; no timer promises success.
-
-To upgrade from relay 0.29.0/router 0.1.0, deploy this relay **first**, remove `router.accounts` and
-`router.waitSeconds`, and put every kind name in `router.keepLabels`, e.g. `["spam", "security", "beg-bounty"]`.
-Keep the existing Worker names and Durable Object state. Stop the old router's account webhook and cron before
-replacing it, then deploy the new router with its bot ids/tokens/secrets, and finally connect bots one account
-at a time. Never run both routers. Existing open tickets remain with people; existing pending tickets are routed.
-During the relay-first transition, open messages can go straight to triage.
-
-Keep existing `routing_*` attributes/definitions through the owner's rollback window. For rollback, disconnect
-bots and keep the router running until pending/open account sweeps and durable ending retries leave no
-brand-bot-owned tickets. Pending uses native handoff; open leftovers use explicit unassignment; resolved/snoozed
-kind endings release the bot in the same turn, preserving status. Confirm cleared ownership across statuses,
-then stop router entry, cron,
-queued alarms and in-flight work, retaining its DO namespace/storage (reply attempts/observed records and turn
-guards cannot be rebuilt from history). Restore the recorded live relay 0.27 version and CONFIG_KEY with its
-original Hub (see [Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md) for
-what changed in it since). Its `kind-reply:<account>:<conversation>` ledger is independent of the Router's
-`reply:<account>:<conversation>` ledger: version/config rollback transfers no records and does not guarantee
-reply-once for Router-only replies or unknown attempts. Retain both DOs and review/isolate those tickets before
-resuming old routing. The relay sweep releases held jobs after disconnect. See the
-router's [upgrade and rollback instructions](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router#upgrade-and-rollback).
+Upgrading from a relay with built-in routing (0.28.0 or earlier) and rolling back are described in
+[Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md) and the router's
+[upgrade and rollback instructions](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router#upgrade-and-rollback).
 
 ## Triage bot hook
 

@@ -109,3 +109,17 @@ and subsequent public answering replies decide triage. `assignee_type` prevents 
 agents. Manage keeps all labels in `router.keepLabels`. See the package README's "How it works" for the model
 and its migration/rollback contract. Shared implementations live in the repository's `shared/` source tree
 and are bundled independently into each published package.
+
+## Chatwoot contracts
+
+Assignment, pending holding and answering replies follow Chatwoot v4.18.0's
+[typed assignment](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/services/conversations/assignment_service.rb),
+[assignee presenter](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/presenters/conversations/event_data_presenter.rb),
+[message types and reopening](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/models/message.rb),
+[reply retries](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/controllers/api/v1/accounts/conversations/messages_controller.rb),
+[update webhooks](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/listeners/webhook_listener.rb),
+[webhook delivery](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/lib/webhooks/trigger.rb), and
+[message paging](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/finders/message_finder.rb).
+A reply that answers a customer message is outgoing, public, not deleted, not failed, not a template (greeting
+or out-of-office) and not an automatic email; bot and human replies both count. Resolved and snoozed tickets get
+no triage mention, and history and automatic customer email stay silent.
