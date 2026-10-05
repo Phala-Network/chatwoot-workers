@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-05
+
+### Fixed
+
+- Route on a customer's message as it arrives. Chatwoot's message webhook describes a contact without a `type`
+  (`Contact#webhook_data`; users and bots have one), and the router required `type: "contact"`, so it ignored
+  every customer message and a new ticket waited for the five-minute sweep.
+
 ## [0.5.0] - 2026-10-05
 
 ### Fixed
@@ -112,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.1...HEAD
+[0.5.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.0...chatwoot-router@0.5.1
 [0.5.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.4.0...chatwoot-router@0.5.0
 [0.4.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.3.0...chatwoot-router@0.4.0
 [0.3.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.2.0...chatwoot-router@0.3.0
