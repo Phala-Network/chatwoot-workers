@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-05
+
 ### Changed
 
 - The triage bot is called in a notice of its own at the end of the run, after the customer's messages and what
@@ -14,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of on the customer message. A Discord bot that batches a mentioning bot's next messages with the
   mention no longer takes those lines for a new request that interrupts its answer. One call per run, however many
   customer messages; budgets still count each message. The bot reads the post's messages before the call.
+
+### Upgrade
+
+- A triage bot must read the post's messages before the call to see the customer's message (Hermes does, with its
+  default history backfill); see [Connecting an AI agent](docs/ai-agent.md#when-the-agent-is-called).
+- The smallest accepted `relay.subrequestBudget` grows by one request, for the call.
 
 ## [0.32.0] - 2026-10-04
 
@@ -708,7 +716,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.32.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.33.0...HEAD
+[0.33.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.32.0...chatwoot-discord-relay@0.33.0
 [0.32.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.31.0...chatwoot-discord-relay@0.32.0
 [0.31.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.30.0...chatwoot-discord-relay@0.31.0
 [0.30.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.29.0...chatwoot-discord-relay@0.30.0
