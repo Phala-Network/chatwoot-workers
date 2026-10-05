@@ -50,23 +50,27 @@ describe("ticket menus", () => {
     expect(menu?.options.some((option) => option.default)).toBe(false);
   });
 
-  it("shows how long the customer has waited, as a time the client keeps current", () => {
-    const overview = (waitingSince: number | null) => {
+  it("shows how long the customer has waited and when a snooze ends, as times the client keeps current", () => {
+    const overview = (waitingSince: number | null, snoozedUntil: number | null = null) => {
       const [card] = ticketCard({
         title: "Acme #1",
         customer: "Jane",
         details: ["Email"],
         url: "https://chatwoot.example.com/app/accounts/3/conversations/1",
-        status: "open",
+        status: snoozedUntil ? "snoozed" : "open",
         assignee: null,
         labels: [],
         waitingSince,
+        snoozedUntil,
       });
       const summary = card?.type === ComponentType.Container ? card.components[0] : undefined;
       return summary?.type === ComponentType.TextDisplay ? summary.content : "";
     };
     expect(overview(1790000000).endsWith("🟢 **Open** · 👉 Unassigned · ⏳ Asked <t:1790000000:R>")).toBe(true);
     expect(overview(null)).not.toContain("⏳");
+    expect(overview(null, 1790000000).endsWith("😴 **Snoozed** · ⏰ Wakes <t:1790000000:R> · 👉 Unassigned")).toBe(
+      true,
+    );
   });
 
   it("bound a card's overview, however long the names and many the labels", () => {
@@ -80,6 +84,7 @@ describe("ticket menus", () => {
       assignee: "y".repeat(300),
       labels,
       waitingSince: null,
+      snoozedUntil: null,
     });
     const summary = card?.type === ComponentType.Container ? card.components[0] : undefined;
     const content = summary?.type === ComponentType.TextDisplay ? summary.content : "";

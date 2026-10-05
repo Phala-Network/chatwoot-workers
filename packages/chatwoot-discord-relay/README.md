@@ -74,7 +74,7 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
 - **One post per conversation.** Its title is `[<Account> #<id>] <customer> — <subject or first message>`. It
   opens with a ticket header (channel, inbox, customer contact, "Open in Chatwoot"), every message follows under
   its sender's name (customers, agents, 🔒 private notes, activity lines), and it ends with the ticket's card:
-  status, assignee and labels, how long the customer has waited for a reply, with buttons. Forum tags follow the conversation (account, status, assignee,
+  status, assignee and labels, how long the customer has waited for a reply and, when snoozed until a time, when it wakes, with buttons. Forum tags follow the conversation (account, status, assignee,
   topic, priority, labels); resolved posts are archived. [How conversations are relayed](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/relay.md) has the details.
 - **Work from the post.** The card's buttons and [commands](#commands-and-buttons) run in Chatwoot with the
   agent's own access token, so Chatwoot's permissions and audit trail apply. Talking in a post never reaches the
@@ -406,7 +406,7 @@ and those with no assignee; each line is the ticket's post (or its dashboard lin
 asked (a Discord timestamp each reader sees as relative, "3 hours ago"), and its assignee, whom it pings when they are a linked agent. A
 ticket with no assignee pings `queue.escalationRoleId` (or `escalationUserId`) after its customer
 has waited 1, 2, 4, 8, and 16 hours, and every 24 hours after that, once per step, until someone
-takes it or replies. Snoozed tickets and pending bot turns are listed after them, marked 💤 and 🤖 respectively,
+takes it or replies. Snoozed tickets (with when they wake, if snoozed until a time) and pending bot turns are listed after them, marked 💤 and 🤖 respectively,
 without pings or escalations. Pending age uses the existing `waiting_since`; it is not the current turn's start.
 Nothing is posted when there is no such ticket. A line holds no customer text, and mentions are
 allowed from the tickets' fields only, never from text. The queue reads up to four pages (100

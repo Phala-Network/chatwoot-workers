@@ -3,8 +3,8 @@
 // linked assignees. An unassigned ticket whose customer has waited 1, 2, 4, 8, and 16 hours, and
 // every 24 hours after that, also pings `queue.escalationRoleId` (or `escalationUserId`), once per
 // step, until someone takes it or replies (a new customer message after a reply starts over).
-// Snoozed tickets that match are listed last, marked 💤, and ping no one. Nothing is posted when the
-// queue is empty.
+// Snoozed tickets that match are listed last, marked 💤 (with when they wake, if snoozed until a
+// time), and ping no one. Nothing is posted when the queue is empty.
 //
 // The header counts the open tickets waiting for a reply and those with no assignee. A line shows
 // only the ticket's post (or dashboard link), when its customer asked (a Discord timestamp the client
@@ -17,7 +17,12 @@ import {
   Routes,
 } from "discord-api-types/v10";
 import { z } from "zod";
-import { type ChatwootClient, CONVERSATIONS_PER_PAGE, personAssignee } from "../../../shared/chatwoot/api.ts";
+import {
+  type ChatwootClient,
+  CONVERSATIONS_PER_PAGE,
+  personAssignee,
+  snoozedUntil,
+} from "../../../shared/chatwoot/api.ts";
 import { parseJson } from "../../../shared/json.ts";
 import { log } from "../../../shared/log.ts";
 import { relaysInbox, type Settings } from "./config.ts";
@@ -57,6 +62,8 @@ interface Ticket {
   assignee: { id: number; name: string } | null;
   escalate: boolean;
   snoozed: boolean;
+  /** Unix seconds when a snoozed ticket reopens; null unless it is snoozed until a time. */
+  wakes: number | null;
   pending: boolean;
 }
 
@@ -127,6 +134,7 @@ export async function postQueue(
             assignee: assignee?.id ? { id: assignee.id, name: assignee.name ?? "" } : null,
             escalate,
             snoozed,
+            wakes: snoozedUntil(conversation),
             pending: status === "pending",
           });
         }
@@ -220,7 +228,8 @@ function line(ctx: QueueContext, ticket: Ticket): string {
       ? defused(clip(ticket.assignee.name, NAME_LIMIT))
       : "❔ Unassigned";
   const mark = ticket.escalate ? "🔔 " : ticket.snoozed ? "💤 " : ticket.pending ? "🤖 " : "";
-  return `${mark}${post} · ${waiting} · ${owner}`;
+  const wakes = ticket.wakes ? ` · ⏰ wakes <t:${ticket.wakes}:R>` : "";
+  return `${mark}${post} · ${waiting}${wakes} · ${owner}`;
 }
 
 async function post(

@@ -29,6 +29,8 @@ interface Open {
   waiting?: number; // hours
   assignee?: { id: number; name: string };
   snoozed?: boolean;
+  /** Hours until a timed snooze ends. */
+  wakes?: number;
   pending?: boolean;
   assigneeType?: string;
 }
@@ -48,6 +50,7 @@ function world(open: Open[], { failPost = 0, rateLimit = false }: { failPost?: n
         inbox_id: 2,
         status,
         waiting_since: c.waiting === undefined ? 0 : NOW - c.waiting * HOUR,
+        snoozed_until: c.wakes === undefined ? null : new Date((NOW + c.wakes * HOUR) * 1000).toISOString(),
         meta: { assignee: c.assignee ?? null, assignee_type: c.assigneeType },
       }));
       return json({ data: { meta: {}, payload } });
@@ -128,7 +131,7 @@ describe("support queue", () => {
   it("lists snoozed tickets last, marked, without pinging anyone or escalating", async () => {
     const { requests } = world([
       { id: 1, waiting: 30, snoozed: true },
-      { id: 2, waiting: 2, snoozed: true, assignee: { id: 42, name: "Alice" } },
+      { id: 2, waiting: 2, snoozed: true, wakes: 5, assignee: { id: 42, name: "Alice" } },
       { id: 3, waiting: 1 },
     ]);
 
@@ -138,7 +141,7 @@ describe("support queue", () => {
     expect(message.content.split("\n").slice(2)).toEqual([
       `🔔 [Acme #3](<https://chatwoot.example.com/app/accounts/3/conversations/3>) · ⏳ <t:${NOW - HOUR}:R> · ❔ Unassigned`,
       `💤 [Acme #1](<https://chatwoot.example.com/app/accounts/3/conversations/1>) · ⏳ <t:${NOW - 30 * HOUR}:R> · ❔ Unassigned`,
-      `💤 [Acme #2](<https://chatwoot.example.com/app/accounts/3/conversations/2>) · ⏳ <t:${NOW - 2 * HOUR}:R> · Alice`,
+      `💤 [Acme #2](<https://chatwoot.example.com/app/accounts/3/conversations/2>) · ⏳ <t:${NOW - 2 * HOUR}:R> · ⏰ wakes <t:${NOW + 5 * HOUR}:R> · Alice`,
     ]);
     expect(message.allowed_mentions).toEqual({ parse: [], users: [], roles: [ROLE] });
   });

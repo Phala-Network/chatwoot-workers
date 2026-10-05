@@ -108,6 +108,8 @@ export interface CardTicket {
   labels: string[];
   /** Unix seconds since the customer has waited for a reply; null when nobody owes them one. */
   waitingSince: number | null;
+  /** Unix seconds when a snoozed ticket reopens; null when it is not snoozed or waits for the next reply. */
+  snoozedUntil: number | null;
 }
 
 /** A card's accent: the ticket's status at a glance. */
@@ -139,6 +141,7 @@ export function ticketCard(ticket: CardTicket, answerId?: string): APIMessageTop
   const more = ticket.labels.length - CARD_LABELS;
   const summary = [
     STATUS_NAMES[ticket.status] ?? `**${clip(ticket.status, CARD_TEXT)}**`,
+    ...(ticket.snoozedUntil ? [`⏰ Wakes <t:${ticket.snoozedUntil}:R>`] : []),
     `👉 ${assignee ? `**${clip(assignee, CARD_TEXT)}**` : "Unassigned"}`,
     ...ticket.labels.slice(0, CARD_LABELS).map((label) => `🏷️ ${clip(label, CARD_TEXT)}`),
     ...(more > 0 ? [`+${more}`] : []),

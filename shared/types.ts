@@ -47,6 +47,8 @@ export interface RelayConversation {
   assignee?: RelayAssignee | null;
   /** Unix seconds since the customer has waited for a reply (Chatwoot's `waiting_since`); null when they do not. */
   waitingSince?: number | null;
+  /** Unix seconds when a snoozed conversation reopens; null when not snoozed or snoozed until the next reply. */
+  snoozedUntil?: number | null;
   assigneeType?: string | null;
   customAttributes: Record<string, unknown>;
 }
