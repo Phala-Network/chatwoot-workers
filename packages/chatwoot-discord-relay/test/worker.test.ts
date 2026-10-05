@@ -21,6 +21,8 @@ import { loadSettings } from "../src/settings.ts";
 import { Store } from "../src/store.ts";
 import { ALICE, BOB, json, mockFetch, on, type Recorded, type Route, TRIAGE } from "./helpers.ts";
 
+const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
+
 const FORUM = "100000000000000055";
 const GUILD = "100000000000000044";
 const encoder = new TextEncoder();
@@ -447,7 +449,7 @@ describe("worker", () => {
     await drain();
 
     const posts = world.webhookPosts();
-    expect(posts).toHaveLength(2);
+    expect(posts).toHaveLength(3);
     expect(posts.every((post) => post.body.components === undefined)).toBe(true);
     expect(posts[0]?.thread).toBeNull();
     expect(posts[0]?.body).toMatchObject({
@@ -462,12 +464,13 @@ describe("worker", () => {
       thread,
       body: {
         allowed_mentions: { parse: [] },
-        content: `My agent will not connect\n-# <@100000000000000777>`,
+        content: "My agent will not connect",
         username: "Jane Doe",
         avatar_url: "https://gravatar.com/avatar/?d=mp&f=y&s=256",
       },
     });
-    // The post ends with its card.
+    // Last, after the card: the triage bot's call.
+    expect(posts[2]).toMatchObject({ thread, body: { content: CALL, allowed_mentions: { parse: [] } } });
     const card = world.cards();
     expect(card).toMatchObject([{ thread, body: { flags: 1 << 15, username: "Chatwoot" } }]);
     expect(buttons(card[0]?.body)).toEqual(ALL_BUTTONS);
@@ -489,7 +492,7 @@ describe("worker", () => {
       ?.messages.push({ id: 502, content: "Try again", message_type: 1, sender: { name: "Sam", type: "user" } });
     await chatwootWebhook(created(12));
     await drain();
-    const later = world.webhookPosts().slice(2);
+    const later = world.webhookPosts().slice(3);
     expect(later).toMatchObject([
       {
         thread,
@@ -580,8 +583,9 @@ describe("worker", () => {
     await drain();
     const replies = world.webhookPosts().filter((post) => post.thread);
     expect(replies.map((post) => post.body.content)).toEqual([
-      "hello\n-# <@100000000000000777>", // attempt answered with HTTP 500
-      "hello\n-# <@100000000000000777>",
+      "hello", // attempt answered with HTTP 500
+      "hello",
+      CALL,
     ]);
     await chatwootWebhook(created(13));
     await drain();
@@ -601,8 +605,8 @@ describe("worker", () => {
     await makeJobsDue();
     await drain();
     const replies = world.webhookPosts().filter((post) => post.thread);
-    expect(replies.at(-1)?.body.content).toBe("hello\n-# <@100000000000000777>");
-    expect(replies).toHaveLength(13); // Twelve rate-limited requests and one successful post.
+    expect(replies.map((post) => post.body.content).slice(-2)).toEqual(["hello", CALL]);
+    expect(replies).toHaveLength(14); // Twelve rate-limited requests, the message, and the call.
     await chatwootWebhook(created(40));
     await drain();
     expect(world.webhookPosts().filter((post) => post.thread)).toEqual(replies);
@@ -627,7 +631,7 @@ describe("worker", () => {
     world.conversations.get(14)?.messages.push({ id: 703, content: "new", message_type: 0 });
     await chatwootWebhook(created(14));
     await drain();
-    expect(world.webhookPosts().map((post) => post.thread)).toEqual([thread]);
+    expect(world.webhookPosts().map((post) => post.thread)).toEqual([thread, thread]); // the message and the call
     // The adopted post may hold a card from before: it is looked for before one is posted.
     expect(world.sent("GET", new RegExp(`^/api/v10/channels/${thread}/messages$`))).toHaveLength(1);
     // Posted on adoption, then moved under the new message.
@@ -656,7 +660,7 @@ describe("worker", () => {
       { status: "all", assignee_type: "all", page: "1" },
       { status: "all", assignee_type: "all", page: "2" },
     ]);
-    expect(world.webhookPosts().map((post) => post.body.content)).toContain("missed\n-# <@100000000000000777>");
+    expect(world.webhookPosts().map((post) => post.body.content)).toEqual(expect.arrayContaining(["missed", CALL]));
   });
 
   it("the sweep stops at conversations without activity in its window", async () => {
@@ -910,7 +914,12 @@ describe("worker", () => {
     world.conversation(99201, [{ id: 9920101, content: "Valid request", message_type: 0 }]);
     await chatwootWebhook(created(99201));
     await drain();
-    expect(world.webhookPosts().at(-1)?.body.content).toBe(`Valid request\n-# <@${TRIAGE}>`);
+    expect(
+      world
+        .webhookPosts()
+        .map((post) => post.body.content)
+        .slice(-2),
+    ).toEqual(["Valid request", CALL]);
   });
 
   it("verifies Discord signatures and answers pings", async () => {
@@ -1129,7 +1138,12 @@ describe("worker", () => {
       await state.storage.setAlarm(Date.now());
     });
     await drain();
-    expect(world.webhookPosts().at(-1)?.body.content).toBe("hello\n-# <@100000000000000777>");
+    expect(
+      world
+        .webhookPosts()
+        .map((post) => post.body.content)
+        .slice(-2),
+    ).toEqual(["hello", CALL]);
     const posts = world.webhookPosts();
     await chatwootWebhook(created(31));
     await drain();

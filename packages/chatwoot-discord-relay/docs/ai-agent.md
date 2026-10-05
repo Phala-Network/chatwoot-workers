@@ -5,7 +5,7 @@ called the *triage bot* in the configuration) a place in the ticket workflow: th
 on customer messages, reads the ticket in its forum post, and proposes a reply that a human sends.
 This page is the contract such an agent follows.
 
-![A ticket post: the customer's message ends with the triage bot mention; the bot answers with an analysis and a draft; an agent sends the draft with Apps → Reply with this](assets/ticket.png)
+![A ticket post: a notice after the customer's message calls the triage bot; the bot answers with an analysis and a draft; an agent sends the draft with Apps → Reply with this](assets/ticket.png)
 
 *Illustration with fictional data.*
 
@@ -24,42 +24,45 @@ messages in posts (threads).
 
 ## When the agent is called
 
-Each new customer message relayed into a post ends with a line that mentions the agent. When
-the conversation's assignee is a linked agent, the same line also pings them:
+The relay brings a post up to date in runs: the new messages (customer messages, and with them
+what a routing bot did: labels, assignment, status lines), the assignee's announcement, and the
+post's card. When a run posted a customer message that calls the agent, the run ends with a
+notice of its own that mentions it:
 
 ```text
--# <@AGENT_USER_ID>
--# <@AGENT_USER_ID> <@ASSIGNEE_USER_ID>
+-# <@AGENT_USER_ID> Triage the customer's latest message.
 ```
 
-The line is the last line of the message. A customer message longer than one Discord message is
-split into several; the line ends the last of them (a "Message truncated" note may follow as a
-separate message), so when the agent sees it, the whole message is already in the post.
+The call is the last message of the run, so when the agent sees it, the customer's messages and
+everything posted with them are already in the post, and nothing the run posts follows it. A run
+with several such customer messages calls the agent once. The agent reads the post's recent
+messages to see what to answer (an agent that only reads the message that mentions it sees just
+the call). A conversation that is no longer open by the end of the run is not called.
 
 The mention is a literal token in the message content; Discord sends no notification for it
 (the relay's `allowed_mentions` leaves it out), so nobody is pinged by it. Only customer
-messages carry it. Agent replies, private notes, activity lines, the ticket header that opens a
-post, the post's card (its last message: the ticket's state and buttons, with no text content),
-and customers' responses to interactive messages (option picks, forms, CSAT ratings) do
-not. Neither do automatic email replies (out of office, for example), nor customer messages
-created more than `reconcile.lookbackSeconds` (an hour by default) before they are relayed: the
-history posted when an older conversation gets its post, or messages caught up after downtime.
+messages call the agent. Agent replies, private notes, activity lines, the ticket header that
+opens a post, the post's card (the ticket's state and buttons, with no text content), and
+customers' responses to interactive messages (option picks, forms, CSAT ratings) do not. Neither
+do automatic email replies (out of office, for example), nor customer messages created more than
+`reconcile.lookbackSeconds` (an hour by default) before they are relayed: the history posted when
+an older conversation gets its post, or messages caught up after downtime.
 
 When a conversation has had more than `perConversationPerHour` customer messages in the current
-hour (UTC clock hour), or all conversations together more than `perHour`, the mention is replaced
-by a note such as
+hour (UTC clock hour), or all conversations together more than `perHour`, the message gets a note
+such as
 `-# Triage bot not called: more than 30 customer messages this hour. Ask it here if needed.`
-A message counts once, however often its posting is retried.
+instead of calling the agent. A message counts once, however often its posting is retried.
 
 The agent must:
 
-1. React only to messages in the forum's posts whose content contains its own mention token
-   (look for the token anywhere in the message; the line may carry other mentions).
-   These messages are posted by the relay's webhook (named `Chatwoot`) under the customer's
-   name, so the agent must not ignore messages from webhooks or bots when they mention it.
-   Customer text cannot contain a working mention token or a `-#` line (the relay inserts a
-   zero-width space), so the token always comes from the relay.
-2. Ignore everything else in the post unless a human asks it directly.
+1. React only to messages in the forum's posts whose content contains its own mention token.
+   The relay's webhook (named `Chatwoot`) posts them, so the agent must not ignore messages from
+   webhooks or bots when they mention it. Customer text cannot contain a working mention token
+   or a `-#` line (the relay inserts a zero-width space), so the token always comes from the
+   relay.
+2. Read the post's messages before the call (since its own last answer) for the ticket.
+3. Ignore everything else in the post unless a human asks it directly.
 
 ## What the agent posts
 

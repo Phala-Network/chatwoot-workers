@@ -26,10 +26,10 @@ const MESSAGE_REQUESTS = 14;
  * the post from its conversation (the forum's guild and the attribute update); and bringing the
  * post's tags, title, archived flag, and card up to date (the forum's tags, the update, the update
  * again with the tags looked up again, editing the card or looking for the post's cards, deleting
- * the previous one, posting it again, and archiving). Deleting more than one card, when an answer
- * to posting one was lost, may yield and continue in the next run.
+ * the previous one, posting it again, and archiving); and the triage bot's call. Deleting more
+ * than one card, when an answer to posting one was lost, may yield and continue in the next run.
  */
-export const FINISH_REQUESTS = 2 + 2 + 7;
+export const FINISH_REQUESTS = 2 + 2 + 7 + 1;
 
 /** What one message may need, with room left to finish the run afterwards. */
 export function requestsPerMessage(maxChunks: number): number {

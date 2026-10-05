@@ -29,7 +29,7 @@ import {
   titleSubject,
   topicTag,
 } from "./format.ts";
-import { assignedLine, assigneeKey, Notifier, type TriageOptions } from "./notify.ts";
+import { assignedLine, assigneeKey, Notifier, type TriageOptions, triageLine } from "./notify.ts";
 
 export type WebhookMessage = RESTPostAPIWebhookWithTokenJSONBody;
 type MessageComponents = NonNullable<WebhookMessage["components"]>;
@@ -84,6 +84,8 @@ export interface PostFields {
   announcedAssignee: string;
   /** 1 while a live message is posted and the assignee is not announced after it yet (see announceAssignee). */
   announcePending: number;
+  /** 1 while a customer message calling the triage bot is posted and the bot is not called yet (see callTriage). */
+  triagePending: number;
   /**
    * The subject the post's title ends with and the title last applied; unset for a post whose
    * title was not recorded (adopted, or created before titles were recorded).
@@ -198,7 +200,8 @@ export class Relay {
    * Posts a message into its conversation's post, creating the post if needed. Each Discord
    * message is recorded as soon as it is sent, so a retry resumes after the last one. Templates,
    * deleted and empty messages, and messages from a blocked contact are not relayed. A message
-   * that notifies leaves an announcement pending (see `announceAssignee`).
+   * that notifies leaves an announcement pending (see `announceAssignee`), and one that calls the
+   * triage bot leaves its call pending (see `callTriage`).
    */
   async relay(message: RelayMessage): Promise<void> {
     if (!RELAYED_TYPES.has(message.messageType) || message.deleted) return;
@@ -210,7 +213,8 @@ export class Relay {
     const { store } = this.options;
     const accountId = message.account.id;
     const conversation = message.conversation;
-    const parts = await this.parts(message, text);
+    const notification = await this.notifier.notification(message);
+    const parts = this.parts(message, text, notification);
     let threadId = store.conversation(accountId, conversation.id)?.threadId;
     if (threadId) {
       try {
@@ -227,6 +231,7 @@ export class Relay {
     }
     this.unarchived(accountId, conversation);
     if (this.notifier.notifies(message)) store.updateConversation(accountId, conversation.id, { announcePending: 1 });
+    if (notification.callsTriage) store.updateConversation(accountId, conversation.id, { triagePending: 1 });
   }
 
   /**
@@ -268,6 +273,27 @@ export class Relay {
       announcedAssignee: assigneeKey(conversation),
       announcePending: 0,
     });
+  }
+
+  /**
+   * Last in a run, while a call is pending: calls the triage bot in a notice of its own, after
+   * everything the run posted (the routing kind's labels, assignment and status lines, the
+   * announcement, the card). The bot reads the post's recent messages when called, so it sees the
+   * customer's messages and how they were routed, and nothing the run posts reaches it as a
+   * follow-up. The card stays where it is, so it is not posted again right after the call. A
+   * conversation that is no longer open is not the team's to answer: the call is dropped. A
+   * failed call stays pending, so the job's retry makes it.
+   */
+  async callTriage(accountId: number, conversation: RelayConversation): Promise<void> {
+    const { triage, store } = this.options;
+    if (!store.conversation(accountId, conversation.id)?.triagePending) return;
+    if (triage && conversation.status === "open") {
+      const posted = await this.postMessage(accountId, conversation, this.notice(triageLine(triage)), {
+        coversCard: false,
+      });
+      if (posted === undefined) return;
+    }
+    store.updateConversation(accountId, conversation.id, { triagePending: 0 });
   }
 
   /**
@@ -389,13 +415,15 @@ export class Relay {
 
   /**
    * The Discord messages for one Chatwoot message. The notification lines go on the last part
-   * (before a truncation note), so a bot they call sees the whole message. Every part is split
-   * with room for them, so a message splits the same way on every attempt and a retry can
-   * resume after the parts already posted.
+   * (before a truncation note). Every part is split with room for them, so a message splits the
+   * same way on every attempt and a retry can resume after the parts already posted.
    */
-  private async parts(message: RelayMessage, text: string): Promise<WebhookMessage[]> {
+  private parts(
+    message: RelayMessage,
+    text: string,
+    notification: { lines: string[]; users: string[] },
+  ): WebhookMessage[] {
     const { frontendUrl, maxChunks } = this.options;
-    const notification = await this.notifier.notification(message);
     const chunks = split(text, CONTENT_LIMIT - this.notifier.reserve);
     const kept = chunks.slice(0, maxChunks);
     const username = senderName(message);
@@ -491,12 +519,14 @@ export class Relay {
   /**
    * Posts one message into the conversation's post and returns its Discord id; undefined when
    * there is no post, or it no longer exists in Discord (it is then forgotten). Like any message,
-   * it unarchives the post: a resolved post needs a sync afterwards.
+   * it unarchives the post: a resolved post needs a sync afterwards. Unless told otherwise, the
+   * card moves below it at the next sync.
    */
   private async postMessage(
     accountId: number,
     conversation: Pick<RelayConversation, "id" | "status">,
     message: WebhookMessage,
+    { coversCard = true }: { coversCard?: boolean } = {},
   ): Promise<string | undefined> {
     const { store, forum } = this.options;
     const threadId = store.conversation(accountId, conversation.id)?.threadId;
@@ -510,7 +540,7 @@ export class Relay {
       return undefined;
     }
     this.unarchived(accountId, conversation);
-    store.updateConversation(accountId, conversation.id, { cardCovered: 1 });
+    if (coversCard) store.updateConversation(accountId, conversation.id, { cardCovered: 1 });
     return messageId;
   }
 

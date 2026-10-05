@@ -44,9 +44,9 @@ do when it does.
 
 *Each conversation is a forum post, tagged by account, status, assignee, topic, and priority.*
 
-![A ticket post: the ticket header, a customer message that mentions a triage bot, an assignment, the bot's answer with a draft, a private note, and the ticket's card with its buttons](https://raw.githubusercontent.com/Phala-Network/chatwoot-workers/main/packages/chatwoot-discord-relay/docs/assets/ticket.png)
+![A ticket post: the ticket header, a customer message, a notice that calls a triage bot, an assignment, the bot's answer with a draft, a private note, and the ticket's card with its buttons](https://raw.githubusercontent.com/Phala-Network/chatwoot-workers/main/packages/chatwoot-discord-relay/docs/assets/ticket.png)
 
-*Inside a post: the customer's message calls the triage bot, whose answer carries a draft; the
+*Inside a post: a notice after the customer's message calls the triage bot, whose answer carries a draft; the
 ticket's card at the bottom offers **Reply with draft** and the other actions. Illustrations
 with fictional data.*
 
@@ -80,7 +80,8 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
   agent's own access token, so Chatwoot's permissions and audit trail apply. Talking in a post never reaches the
   customer; only commands do.
 - **AI drafts, humans send.** A live customer message on an open ticket that no public reply has answered yet
-  mentions the triage bot set in `triage.userId`, within hourly budgets; history relayed later, automatic email,
+  calls the triage bot set in `triage.userId`, within hourly budgets, in a notice after everything posted with it;
+  history relayed later, automatic email,
   and resolved or snoozed tickets stay silent ([Internals](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/internals.md#chatwoot-contracts)). The bot answers in the post with a draft, and a human
   sends it with **Reply with draft** or **Apps → Reply with this**. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md).
 - **Pings.** Live customer messages ping the linked assignee. An agent bot is never a person: a ticket assigned
@@ -97,10 +98,11 @@ Design choices:
 - **Chatwoot stays the system of record.** Discord is where the team, people and bots alike, works. The post URL
   is stored in the conversation's link attribute (`relay.linkAttribute`, default `discord_thread`), and the
   header links back to Chatwoot.
-- **An AI agent joins without code changes.** The mention is a literal `<@bot>` with notifications suppressed, so
-  a Discord bot that reacts to mentions wakes up for customer messages and nothing else.
+- **An AI agent joins without code changes.** The call is a literal `<@bot>` with notifications suppressed, so
+  a Discord bot that reacts to mentions, and reads the messages before one, wakes up for customer messages and
+  nothing else.
 - **Cost and abuse are bounded.** At most `triage.perConversationPerHour` customer messages per conversation and
-  `triage.perHour` in total call the bot each hour; beyond that a visible note replaces the mention. Messages from
+  `triage.perHour` in total call the bot each hour; beyond that a visible note says it was not called. Messages from
   blocked contacts are never relayed.
 - **Reliable and isolated.** Chatwoot sends each webhook once, without retry, so webhooks are only triggers: the
   conversation's own Durable Object reads Chatwoot's API and retries until it succeeds, and a sweep every 5 minutes
@@ -327,7 +329,7 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `agents[].discordUserId` | Discord id (17–20 digits) | required | The agent's Discord user. |
 | `agents[].chatwootUserId` | integer > 0 | required | The agent's Chatwoot user id, the same in every account: the `id` from `GET /api/v1/profile` with the agent's own access token, or from an administrator's `GET /api/v1/accounts/<account id>/agents`. |
 | `forumTags` | object: forum channel id → (key → tag id) | `{}` | The forum tags posts get, by what each tag stands for. Keys: `account:<account id>`, `status:open`, `status:pending`, `status:snoozed`, `status:resolved`, `assignee:<Chatwoot user id>`, `assignee:none`, `topic:<value>`, `priority:urgent`, `priority:high`, `priority:medium`, `priority:low`, `label:<label>`. Tag ids come from `npm run forum-tags`. |
-| `triage.userId` | Discord id (17–20 digits) | unset | Discord user id of an AI agent (triage bot) to mention on customer messages. Unset: no mention. |
+| `triage.userId` | Discord id (17–20 digits) | unset | Discord user id of an AI agent (triage bot) to call after customer messages. Unset: no call. |
 | `triage.name` | 1–100 characters | `Triage bot` | Name used in budget notes. |
 | `triage.perConversationPerHour` | integer ≥ 1 | `5` | Customer messages per conversation that call the triage bot each hour. |
 | `triage.perHour` | integer ≥ 1 | `30` | Customer messages in total that call the triage bot each hour. |
