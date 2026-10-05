@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
+
+### Fixed
+
+- Route a resolved ticket that a customer message reopens. Chatwoot reopens it as pending in a bot inbox and keeps
+  its assignee, and the router left every pending ticket with a person assignee alone, so such a ticket stayed
+  pending: off people's open view and never handed back. Its turn is now routed with its owner kept: a kind with a
+  status still ends it (a thanks-only message can be resolved), and anything else, a greeting included, goes back
+  to the owner as open. Only another bot's pending tickets are left alone.
+
 ## [0.4.0] - 2026-10-04
 
 ### Changed
@@ -102,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.4.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.0...HEAD
+[0.5.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.4.0...chatwoot-router@0.5.0
 [0.4.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.3.0...chatwoot-router@0.4.0
 [0.3.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.2.0...chatwoot-router@0.3.0
 [0.2.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.1.0...chatwoot-router@0.2.0

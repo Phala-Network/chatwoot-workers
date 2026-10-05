@@ -152,7 +152,8 @@ export function world(ticket: Ticket = {}, answers: Answers = { owner: ["cloud",
       }),
       mutation("toggle_status", (request) => {
         ticket.status = JSON.parse(request.body).status;
-        if (ticket.status === "open") {
+        // Bot handoff (Conversation#bot_handoff!) clears only the bot; a person stays assigned.
+        if (ticket.status === "open" && ticket.assigneeType === "AgentBot") {
           ticket.assignee = null;
           ticket.assigneeType = null;
         }

@@ -4,6 +4,7 @@ import { chatwootClient } from "../../../shared/chatwoot/api.ts";
 import { routeConversation } from "../src/routing.ts";
 import { expectActivity, recordFailure, requestHandoff } from "../src/turn.ts";
 import {
+  type Answers,
   activity,
   CW,
   context,
@@ -182,29 +183,22 @@ describe("native bot turns", () => {
     },
   );
 
-  it.each(["open", "snoozed", "resolved", "person", "blocked", "other-bot"])(
-    "leaves %s conversations alone",
-    async (reason) => {
-      const ticket: Ticket = {};
-      if (["open", "snoozed", "resolved"].includes(reason)) {
-        ticket.status = reason;
-        ticket.assignee = null;
-        ticket.assigneeType = null;
-      }
-      if (reason === "person") {
-        ticket.assignee = { id: 1 };
-        ticket.assigneeType = "User";
-      }
-      if (reason === "blocked") ticket.blocked = true;
-      if (reason === "other-bot") {
-        ticket.assignee = { id: 99 };
-        ticket.assigneeType = "AgentBot";
-      }
-      const mock = world(ticket);
-      await routeConversation(context(), 1, 5);
-      expect(mock.requests.filter((request) => request.method === "POST")).toEqual([]);
-    },
-  );
+  it.each(["open", "snoozed", "resolved", "blocked", "other-bot"])("leaves %s conversations alone", async (reason) => {
+    const ticket: Ticket = {};
+    if (["open", "snoozed", "resolved"].includes(reason)) {
+      ticket.status = reason;
+      ticket.assignee = null;
+      ticket.assigneeType = null;
+    }
+    if (reason === "blocked") ticket.blocked = true;
+    if (reason === "other-bot") {
+      ticket.assignee = { id: 99 };
+      ticket.assigneeType = "AgentBot";
+    }
+    const mock = world(ticket);
+    await routeConversation(context(), 1, 5);
+    expect(mock.requests.filter((request) => request.method === "POST")).toEqual([]);
+  });
 
   it("rejects a foreign account's bot without mutations", async () => {
     const mock = world({ bot: { id: 1, account_id: 2 } });
@@ -270,9 +264,11 @@ describe("native bot turns", () => {
       const ticket: Ticket = {
         during: (operation) => {
           if (operation !== "jev") return;
+          // Assigning a person opens a pending ticket.
           if (change === "person") {
             ticket.assignee = { id: 1 };
             ticket.assigneeType = "User";
+            ticket.status = "open";
           } else if (change === "blocked") ticket.blocked = true;
           else if (change === "unlinked") ticket.bot = null;
           else ticket.status = change;
@@ -332,6 +328,30 @@ describe("native bot turns", () => {
     expect(mock.ticket.status).toBe("open");
     expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
   });
+
+  const reopened: Array<[string, Answers, string]> = [
+    ["a resolving kind is resolved", { owner: ["sales", 1], kind: ["spam", 1] }, "resolved"],
+    ["a greeting goes back to its owner", { owner: ["sales", 1], request: ["none", 1] }, "open"],
+    ["a request goes back to its owner", { owner: ["sales", 1] }, "open"],
+  ];
+  it.each(reopened)(
+    "routes a resolved ticket reopened with its owner: %s, who keeps it",
+    async (_, answers, status) => {
+      const mock = world(
+        {
+          assignee: { id: 6 },
+          assigneeType: "User",
+          labels: ["billing"],
+          messages: [activity(1), incoming(2, "Thanks!")],
+        },
+        answers,
+      );
+      await routeConversation(context(new MemoryStore(), KINDS), 1, 5);
+      expect(mock.ticket.status).toBe(status);
+      expect(mock.ticket.assignee?.id).toBe(6);
+      expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+    },
+  );
 
   it("keeps greetings pending, memoizes the window, then decides again on a request", async () => {
     const mock = world({ messages: [incoming(1, "Hello there")] }, { owner: ["unclear", 1], request: ["none", 1] });

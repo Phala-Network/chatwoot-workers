@@ -132,8 +132,10 @@ export async function routeConversation(
       return;
     }
     const conversation = toRelayConversation(conversationId, raw);
-    if (conversation.assignee) return;
-    if (raw.meta?.assignee && (raw.meta.assignee_type !== "AgentBot" || raw.meta.assignee.id !== botId)) return;
+    // A person on a pending ticket owned it before it was resolved: a customer message reopens a resolved ticket
+    // as pending in a bot inbox and keeps its assignee (assigning a person opens a pending ticket). The turn is
+    // routed and the owner kept.
+    if (raw.meta?.assignee_type === "AgentBot" && raw.meta.assignee?.id !== botId) return;
     if ((await chatwoot.inboxBot(accountId, raw.inbox_id))?.id !== botId) {
       // Disconnect is level-triggered: native bot handoff also clears ai_assignee.
       // Re-read ownership immediately before the mutation; never touch another bot or person.
@@ -214,7 +216,8 @@ export async function routeConversation(
   let current = await fresh();
   if (current === "defer" || !current) return current;
   if (current.handoff) return handoff(current);
-  if (!kind && decision.noRequest && input.count < MAX_MESSAGES) return;
+  // A greeting waits for a request, unless the ticket has an owner to hand it to.
+  if (!kind && decision.noRequest && input.count < MAX_MESSAGES && !current.conversation.assignee) return;
   const topic =
     !kind?.status &&
     decision.topic !== null &&
