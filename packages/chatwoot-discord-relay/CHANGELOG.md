@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The hand-over from relay 0.27's single Hub, finished in production by 0.35.1: a conversation's object no longer
+  takes records over from the Hub, the Hub no longer exports them, hands over queued jobs of 0.27, or runs the
+  hand-over job, and triage decisions of 0.27 are no longer read. When it starts, the Hub keeps only which
+  conversation each post belongs to and drops the records 0.27 kept there.
+
+### Upgrade
+
+- From 0.35.0 or earlier with 0.27's Hub records: deploy 0.35.1 first and wait for `legacy hand-over done`.
+
 ## [0.35.1] - 2026-10-05
 
 ### Fixed

@@ -414,20 +414,6 @@ describe("Relay", () => {
     },
   );
 
-  it("keeps a triage decision an earlier version made for a message", async () => {
-    let store: MemoryStore;
-    ({ relay, forum, store } = relayWith({ triage: { ...triage, perConversationPerHour: 1 } }));
-    // Taken over from the Hub: the message was counted, and the bot was to be called.
-    store.decisions.set("triage:3:203", "mention");
-    store.counters.set(`triage:3:12:${NOW.toISOString().slice(0, 13)}`, 1);
-    await inRun(relay, message({ id: 203, content: "third" }));
-    expect(forum.contents().slice(-2)).toEqual(["third", CALL]);
-    // Over the hourly budget then: it stays uncalled.
-    store.decisions.set("triage:3:204", "hour");
-    await inRun(relay, message({ id: 204, content: "fourth" }));
-    expect(forum.contents().at(-1)).toBe("-# Triage bot not called: called 30 times this hour. Ask it here if needed.");
-  });
-
   it("calls the triage bot last, below the card, which stays put", async () => {
     const { relay, forum } = relayWith({ triage, card: ticketCard });
     const conversation = message().conversation;
