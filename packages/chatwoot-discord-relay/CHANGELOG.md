@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-05
+
 ### Changed
 
 - The triage bot's call is decided when a run ends, for the customer's latest message, from what the run relayed:
@@ -728,7 +730,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.33.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.34.0...HEAD
+[0.34.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.33.0...chatwoot-discord-relay@0.34.0
 [0.33.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.32.0...chatwoot-discord-relay@0.33.0
 [0.32.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.31.0...chatwoot-discord-relay@0.32.0
 [0.31.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.30.0...chatwoot-discord-relay@0.31.0
