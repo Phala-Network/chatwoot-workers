@@ -841,9 +841,9 @@ describe("the card", () => {
     expect(forum.ids.at(-1)).not.toBe(cardId);
   });
 
-  it("offers the triage bot's draft under its answer, until the customer writes again", async () => {
+  it("offers the triage bot's draft under its answer, until it is sent or the customer writes again", async () => {
     const { relay, forum } = relayWith({ card: ticketCard });
-    const conversation = message().conversation;
+    const conversation = { ...message().conversation, waitingSince: 1_790_000_000 };
     await relay.relay(message());
     await relay.sync(3, conversation, "thread-1");
     const first = forum.ids.at(-1);
@@ -859,7 +859,14 @@ describe("the card", () => {
     expect(forum.deleted).toEqual([first]);
     expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual([`ticket:draft:${answer}`, "ticket:reply"]);
 
-    await relay.relay(message({ id: 2 }));
+    // A reply was sent (Chatwoot no longer counts the customer as waiting): the draft is used.
+    await relay.relay(
+      message({ id: 2, messageType: "outgoing", answers: true, sender: { name: "Kim", type: "user" } }),
+    );
+    await relay.sync(3, { ...conversation, waitingSince: null }, "thread-1");
+    expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual(["ticket:reply"]);
+
+    await relay.relay(message({ id: 3 }));
     await relay.sync(3, conversation, "thread-1");
     expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual(["ticket:reply"]);
   });
@@ -919,7 +926,7 @@ describe("the card", () => {
 
   it("offers only the latest draft that answers the customer's latest message, however receipts come", async () => {
     const { relay, forum } = relayWith({ card: ticketCard });
-    const conversation = message().conversation;
+    const conversation = { ...message().conversation, waitingSince: 1_790_000_000 };
     const draftOffered = () => shown(forum.calls.at(-1)?.[1])[1]?.[0];
     const latest = () => forum.ids[forum.calls.findLastIndex(([, payload]) => payload.username === "Jane Doe")] ?? "";
     await relay.relay(message());

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.2] - 2026-10-05
+
+### Fixed
+
+- The card stops offering Reply with draft once a reply is sent: the draft is offered only while the customer waits
+  for a reply (Chatwoot's `waiting_since`). It used to stay until the customer wrote again.
+
 ## [0.40.1] - 2026-10-05
 
 ### Changed
@@ -811,7 +818,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.1...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.2...HEAD
+[0.40.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.1...chatwoot-discord-relay@0.40.2
 [0.40.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.0...chatwoot-discord-relay@0.40.1
 [0.40.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.39.0...chatwoot-discord-relay@0.40.0
 [0.39.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.38.0...chatwoot-discord-relay@0.39.0
