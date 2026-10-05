@@ -102,12 +102,7 @@ app.post("/triage/answered", bodyLimit({ maxSize: 64 * 1024 }), async (c) => {
   }
   // An answer in a post that is not a ticket's changes nothing.
   const ticket = await hub(c.env).ticketForThread(answer.threadId);
-  if (ticket)
-    await conversationStub(c.env, ticket.accountId, ticket.conversationId).triageAnswered(
-      ticket.accountId,
-      ticket.conversationId,
-      answer,
-    );
+  if (ticket) await conversationStub(c.env, ticket.accountId, ticket.conversationId).triageAnswered(answer);
   return c.json({ ok: true });
 });
 
@@ -142,11 +137,7 @@ app.post("/discord/interactions", bodyLimit({ maxSize: 1024 * 1024 }), async (c)
       },
       draftOf: async (threadId, answerId) => {
         const kept = ticket
-          ? await conversationStub(c.env, ticket.accountId, ticket.conversationId).answerDraft(
-              ticket.accountId,
-              ticket.conversationId,
-              answerId,
-            )
+          ? await conversationStub(c.env, ticket.accountId, ticket.conversationId).answerDraft(answerId)
           : null;
         if (kept !== null) return { text: kept };
         const rest = new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, (request) =>

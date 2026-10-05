@@ -148,11 +148,7 @@ export class Conversation extends DurableObject<Env> {
    * draft is kept for Reply with draft, and the post's card offers it under the answer (Relay.answered).
    * Each answer is taken once, so a repeated call adds nothing.
    */
-  async triageAnswered(
-    accountId: number,
-    conversationId: number,
-    answer: { threadId: string; answerId: string; replyTo: string; draft: string },
-  ): Promise<void> {
+  async triageAnswered(answer: { threadId: string; answerId: string; replyTo: string; draft: string }): Promise<void> {
     const ticket = this.store.ticketForThread(answer.threadId);
     if (!ticket || this.store.get(answerKey(answer.answerId)) !== undefined) return;
     this.store.set(answerKey(answer.answerId), answer.draft, ANSWER_TTL_MS);
@@ -161,7 +157,7 @@ export class Conversation extends DurableObject<Env> {
   }
 
   /** The draft the triage bot's hook sent with an answer, while it is kept. */
-  async answerDraft(accountId: number, conversationId: number, answerId: string): Promise<string | null> {
+  async answerDraft(answerId: string): Promise<string | null> {
     return this.store.get(answerKey(answerId)) ?? null;
   }
 
