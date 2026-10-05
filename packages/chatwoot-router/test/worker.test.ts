@@ -24,7 +24,8 @@ const incoming = (conversationId: number, accountId = 1) => ({
   id: 501,
   account: { id: accountId },
   conversation: { id: conversationId },
-  sender: { type: "contact" },
+  // Contact#webhook_data, as Chatwoot sends it: no `type`.
+  sender: { id: 7, name: "Jane Doe" },
   message_type: "incoming",
   private: false,
 });
@@ -101,6 +102,7 @@ describe("bot webhook and durable recovery", () => {
       { ...incoming(5), message_type: "outgoing" },
       { ...incoming(5), private: true },
       { ...incoming(5), sender: { type: "agent_bot" } },
+      { ...incoming(5), sender: { type: "user" } },
       { ...incoming(5), event: "unknown" },
       { event: "conversation_created", account: { id: 1 }, id: 5 },
     ]) {

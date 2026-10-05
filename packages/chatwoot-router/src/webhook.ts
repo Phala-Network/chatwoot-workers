@@ -51,7 +51,8 @@ export function eventTarget(
     event.event === "message_created" &&
     (event.message_type === "incoming" || event.message_type === 0) &&
     !event.private &&
-    event.sender?.type === "contact" &&
+    // A contact's webhook data has no `type` (Contact#webhook_data); a user's and a bot's do.
+    (event.sender?.type ?? "contact") === "contact" &&
     event.id !== undefined &&
     event.conversation
   ) {

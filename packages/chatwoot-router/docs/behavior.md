@@ -98,6 +98,7 @@ and its [job](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/jo
 [message creation](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/builders/messages/message_builder.rb),
 [message JSON](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/views/api/v1/models/_message.json.jbuilder),
 [bot sender](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/models/agent_bot.rb),
+[contact in message webhooks](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/models/contact.rb) (`webhook_data` has no `type`),
 [account access](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/controllers/concerns/ensure_current_account_helper.rb),
 [conversation access](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/policies/conversation_policy.rb),
 [inbox bot response](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/views/api/v1/accounts/inboxes/agent_bot.json.jbuilder),
