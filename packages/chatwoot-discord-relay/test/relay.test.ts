@@ -35,7 +35,8 @@ const AVATARS = {
 const triage = { userId: TRIAGE, name: "Triage bot", perConversationPerHour: 5, perHour: 30 };
 const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
 
-const HANDLED = "-# Triage bot not called: handled automatically. Ask it here, if needed.";
+const HANDLED =
+  "-# Triage bot not called: the customer was answered, or the ticket is not open. Ask it here if needed.";
 
 /** What the processor does in a run: relay its messages, then decide the triage bot's call and make it last. */
 async function inRun(relay: Relay, ...messages: RelayMessage[]): Promise<void> {
@@ -596,13 +597,14 @@ describe("Relay", () => {
 
   it("resumes a long message after the parts already posted", async () => {
     ({ relay, forum } = relayWith({ triage }));
-    // The historical 1,674-character chunk boundary must remain stable on retry across upgrades.
-    const text = `${"a".repeat(1674)}${"b".repeat(1674)}${"c".repeat(100)}`;
+    // A part is a Discord message less the room kept for the notification line.
+    const part = CONTENT_LIMIT - "\n-# <@99999999999999999999>".length;
+    const text = `${"a".repeat(part)}${"b".repeat(part)}${"c".repeat(100)}`;
     await relay.relay(message());
     forum.failAfter = 1;
     await expect(relay.relay(message({ id: 102, content: text }))).rejects.toThrow("Discord HTTP 500");
     await relay.relay(message({ id: 102, content: text }));
-    expect(forum.contents().slice(2)).toEqual(["a".repeat(1674), "b".repeat(1674), "c".repeat(100)]);
+    expect(forum.contents().slice(2)).toEqual(["a".repeat(part), "b".repeat(part), "c".repeat(100)]);
   });
 
   it("says so, archives, and forgets a post whose conversation was deleted", async () => {

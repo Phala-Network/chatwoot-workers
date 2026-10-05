@@ -18,7 +18,8 @@ import { ALICE, BOB, FORUM, json, mockFetch, on, type Recorded, TRIAGE, testSett
 const GUILD = "100000000000000044";
 const now = () => Math.floor(Date.now() / 1000);
 const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
-const HANDLED = "-# Triage bot not called: handled automatically. Ask it here, if needed.";
+const HANDLED =
+  "-# Triage bot not called: the customer was answered, or the ticket is not open. Ask it here if needed.";
 
 interface FakeMessage {
   id: number;
@@ -341,7 +342,8 @@ describe("processConversation", () => {
       await sync(store, settings);
       const oldThread = world.posts().find((post) => post.thread)?.thread;
       if (!oldThread) throw new Error("Test post missing");
-      const long = "a".repeat(1674) + "b".repeat(1000);
+      const part = 2000 - "\n-# <@99999999999999999999>".length; // a Discord message less the notification line
+      const long = "a".repeat(part) + "b".repeat(1000);
       world.messages.push({ id: 3, content: long, message_type: 1 });
       let parts = 0;
       world.threadFailure = () => {
@@ -351,7 +353,7 @@ describe("processConversation", () => {
           : json({ message: "unavailable" }, { status: 503 });
       };
       await expect(sync(store, settings)).rejects.toThrow("503");
-      expect(world.posts().at(-2)?.body.content).toBe(long.slice(0, 1674));
+      expect(world.posts().at(-2)?.body.content).toBe(long.slice(0, part));
       // The deleted thread invalidates unfinished parts and response digests, but not the completed cursor.
       world.goneThreads.add(oldThread);
       world.threadFailure = () => {

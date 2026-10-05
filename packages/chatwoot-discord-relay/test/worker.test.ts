@@ -22,7 +22,8 @@ import { Store } from "../src/store.ts";
 import { ALICE, BOB, json, mockFetch, on, type Recorded, type Route, TRIAGE } from "./helpers.ts";
 
 const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
-const HANDLED = "-# Triage bot not called: handled automatically. Ask it here, if needed.";
+const HANDLED =
+  "-# Triage bot not called: the customer was answered, or the ticket is not open. Ask it here if needed.";
 
 const FORUM = "100000000000000055";
 const GUILD = "100000000000000044";

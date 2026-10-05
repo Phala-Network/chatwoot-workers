@@ -51,27 +51,10 @@ export function assigneeKey(conversation: RelayConversation): string {
 const LONGEST_MENTION = `<@${"9".repeat(20)}>`;
 
 export class Notifier {
-  /**
-   * The room kept on a message for its notification lines, in UTF-16 units. Sized for the lines
-   * earlier versions put on it (the triage mention and notes as well), so a message splits as it
-   * did: a retry resumes after the parts already posted.
-   */
-  readonly reserve: number;
+  /** The room kept on a message for its notification line (the assignee's ping), in UTF-16 units. */
+  readonly reserve = `\n-# ${LONGEST_MENTION}`.length;
 
-  constructor(private readonly options: NotifierOptions) {
-    const { triage } = options;
-    const lines = [
-      `-# ${LONGEST_MENTION} ${LONGEST_MENTION}`,
-      ...(triage
-        ? [
-            `-# ${triage.name} not called: more than ${triage.perConversationPerHour} customer messages in this conversation this hour. Ask it here if needed.`,
-            `-# ${triage.name} not called: more than ${triage.perHour} customer messages this hour. Ask it here if needed.`,
-            handledNote(triage),
-          ]
-        : []),
-    ];
-    this.reserve = lines.reduce((sum, line) => sum + line.length + 1, 0);
-  }
+  constructor(private readonly options: NotifierOptions) {}
 
   /** The notification lines for a message; the same on every attempt at posting it. */
   async notification(message: RelayMessage): Promise<Notification> {
@@ -162,7 +145,7 @@ function conversationBudgetNote(triage: TriageOptions): string {
 }
 
 function handledNote(triage: TriageOptions): string {
-  return `-# ${triage.name} not called: handled automatically. Ask it here, if needed.`;
+  return `-# ${triage.name} not called: the customer was answered, or the ticket is not open. Ask it here if needed.`;
 }
 
 function hourlyBudgetNote(triage: TriageOptions): string {
