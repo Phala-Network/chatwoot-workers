@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-05
+
 ### Removed
 
 - The hand-over from relay 0.27's single Hub, finished in production by 0.35.1: a conversation's object no longer
@@ -759,7 +761,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.1...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.36.0...HEAD
+[0.36.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.1...chatwoot-discord-relay@0.36.0
 [0.35.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.0...chatwoot-discord-relay@0.35.1
 [0.35.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.34.0...chatwoot-discord-relay@0.35.0
 [0.34.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.33.0...chatwoot-discord-relay@0.34.0
