@@ -33,8 +33,10 @@ independent between conversations: a slow request delays only its own conversati
 `src/hub.ts`, with SQLite: one object shared by all conversations. Conversations only read or write
 its storage (which conversation a post belongs to, the triage bot's hourly count), so they never wait
 for its own background work, the sweep and the support queue. Earlier versions kept every
-conversation here; each conversation's object takes its records over on first use, and the sweep
-hands posts those versions left without a card to their conversations.
+conversation here; each conversation's object takes its records over on first use, and a hand-over job
+(queued by the cron until it is done) gives every conversation they relayed to its object once, a page
+per run, posting a missing card while the ticket is not resolved. It logs `legacy hand-over done` when
+finished; after that a later release can drop the hand-over code and these records.
 
 Jobs run by priority (commands first), failures retry with exponential backoff (5 s …
 30 min), and a run yields before the subrequest limit. A job that Discord rate limits waits as long

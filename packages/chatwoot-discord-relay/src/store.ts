@@ -229,29 +229,22 @@ export class Store extends QueueStore implements RelayStore, Cache {
   }
 
   /**
-   * Up to `limit` of the account's posts an earlier version relayed (they have a cursor; posts only
-   * registered by Hub.claimThread have none) that have no card, whose ticket was not resolved when
-   * last synced (`state` is Relay.stateOf, which starts with the status), and that were not taken
-   * in the last `retryMs`, nor handed over to the conversation's own object; each is taken (see Hub.backfillCards).
+   * The conversations an earlier version relayed (they have a cursor; posts only registered by
+   * Hub.claimThread have none), in the order they were recorded, after row `after`: at most `limit`.
    */
-  takePostsWithoutCard(accountId: number, limit: number, retryMs: number): number[] {
-    const ids = this.sql
-      .exec<{ conversation_id: number }>(
-        `SELECT c.conversation_id FROM conversations c
-         LEFT JOIN cache taken ON taken.key = 'card-backfill:' || c.account_id || ':' || c.conversation_id
-           AND (taken.expires_at IS NULL OR taken.expires_at > ?)
-         WHERE c.account_id = ? AND c.thread_id IS NOT NULL AND c.cursor IS NOT NULL AND c.card_id IS NULL
-           AND taken.key IS NULL
-           AND (c.state IS NULL OR c.state NOT LIKE '["resolved"%')
-         ORDER BY c.conversation_id DESC LIMIT ?`,
-        this.now(),
-        accountId,
+  relayedConversations(
+    after: number,
+    limit: number,
+  ): Array<{ row: number; accountId: number; conversationId: number }> {
+    return this.sql
+      .exec<{ row: number; account_id: number; conversation_id: number }>(
+        `SELECT rowid AS row, account_id, conversation_id FROM conversations
+         WHERE cursor IS NOT NULL AND rowid > ? ORDER BY rowid LIMIT ?`,
+        after,
         limit,
       )
       .toArray()
-      .map((row) => row.conversation_id);
-    for (const id of ids) this.set(`card-backfill:${accountId}:${id}`, "1", retryMs);
-    return ids;
+      .map((row) => ({ row: row.row, accountId: row.account_id, conversationId: row.conversation_id }));
   }
 
   setCursor(accountId: number, conversationId: number, cursor: number): void {

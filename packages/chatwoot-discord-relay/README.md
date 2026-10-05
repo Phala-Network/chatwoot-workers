@@ -266,8 +266,8 @@ bottom (posted again, the previous one deleted) when the relay posts messages or
 reports an answer, so a post has one card, under the latest of those (a message posted in
 Discord by anyone else does not move it). After a triage bot's answer with a draft, reported by
 the bot's [hook](#triage-bot-hook), the card moves under the answer and is led by **Reply with
-draft** until the customer writes again. A post from before cards gets its card from the sweep
-while its ticket is not resolved, or with its next message; buttons under older messages keep
+draft** until the customer writes again. A post from before cards gets its card when the Hub hands its
+conversation over (see [Internals](docs/internals.md)) while its ticket is not resolved, or with its next message; buttons under older messages keep
 working, and the commands work everywhere.
 
 | Command | Card button | Effect in Chatwoot |
