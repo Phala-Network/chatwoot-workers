@@ -1,10 +1,10 @@
 // Who a relayed message notifies: the linked assignee's ping on customer messages, as a line
-// added to its last part, and whether the triage bot is called for it (within its hourly
-// budgets, and not for a message a routing kind handled; a line says why it is not). Also who a
-// post announces as newly assigned. Relay posts the announcement and the triage bot's call after
-// the live messages of a run. Only live messages notify; history relayed later (the first sync of
-// an older conversation, a catch-up after downtime) and automatic email replies are posted
-// without them.
+// added to its last part. Also who a post announces as newly assigned, and whether the triage bot
+// is called for the customer's latest message (within its hourly budgets, and not when a reply
+// answered it or the ticket is no longer open; a note says why it is not). Relay posts the
+// announcement, the note, and the call after the live messages of a run. Only live messages
+// notify; history relayed later (the first sync of an older conversation, a catch-up after
+// downtime) and automatic email replies are posted without them.
 
 import type { LinkedAgent, RelayConversation, RelayMessage } from "../../../../shared/types.ts";
 import { fromCustomer } from "./format.ts";
@@ -26,7 +26,7 @@ interface NotifierOptions {
   liveSeconds: number;
   now: () => Date;
   /**
-   * Counts a customer message `event` against the hourly budget shared by every conversation, once per event;
+   * Counts a call `event` against the hourly budget shared by every conversation, once per event;
    * false when the budget of `hour` is used up. Unset: counted in `store`.
    */
   reserveTriage?: ((hour: string, event: string) => Promise<boolean>) | undefined;
@@ -36,9 +36,10 @@ interface Notification {
   lines: string[];
   /** Users the lines may ping. */
   users: string[];
-  /** Whether the triage bot is called for the message. */
-  callsTriage: boolean;
 }
+
+/** The triage bot is called, or a note says why it is not. */
+export type TriageDecision = { call: true } | { note: string };
 
 /** Who a post announces as its assignee: their Chatwoot user id, which a rename does not change; "" for none. */
 export function assigneeKey(conversation: RelayConversation): string {
@@ -51,9 +52,9 @@ const LONGEST_MENTION = `<@${"9".repeat(20)}>`;
 
 export class Notifier {
   /**
-   * The most room the notification lines of a message can take, in UTF-16 units. Sized as when
-   * the lines also mentioned the triage bot, so a message splits as it did before: a retry
-   * resumes after the parts already posted.
+   * The room kept on a message for its notification lines, in UTF-16 units. Sized for the lines
+   * earlier versions put on it (the triage mention and notes as well), so a message splits as it
+   * did: a retry resumes after the parts already posted.
    */
   readonly reserve: number;
 
@@ -61,20 +62,29 @@ export class Notifier {
     const { triage } = options;
     const lines = [
       `-# ${LONGEST_MENTION} ${LONGEST_MENTION}`,
-      ...(triage ? [conversationBudgetNote(triage), hourlyBudgetNote(triage), handledNote(triage)] : []),
+      ...(triage
+        ? [
+            `-# ${triage.name} not called: more than ${triage.perConversationPerHour} customer messages in this conversation this hour. Ask it here if needed.`,
+            `-# ${triage.name} not called: more than ${triage.perHour} customer messages this hour. Ask it here if needed.`,
+            handledNote(triage),
+          ]
+        : []),
     ];
     this.reserve = lines.reduce((sum, line) => sum + line.length + 1, 0);
   }
 
   /** The notification lines for a message; the same on every attempt at posting it. */
   async notification(message: RelayMessage): Promise<Notification> {
-    if (!this.notifies(message)) return { lines: [], users: [], callsTriage: false };
+    if (!this.notifies(message)) return { lines: [], users: [] };
     // While a new assignee waits for their announcement, which pings them, do not ping twice.
     const ping = fromCustomer(message) && !this.newAssignee(message.account.id, message.conversation);
     const assignee = ping ? this.linkedAssignee(message.conversation) : undefined;
-    const triage = await this.triage(message);
-    const lines = [assignee ? `-# <@${assignee}>` : undefined, triage.note].filter((line) => line !== undefined);
-    return { lines, users: assignee ? [assignee] : [], callsTriage: triage.calls === true };
+    return assignee ? { lines: [`-# <@${assignee}>`], users: [assignee] } : { lines: [], users: [] };
+  }
+
+  /** Whether a message is one the triage bot may be called for: a live customer message, with a triage bot set. */
+  callsTriage(message: RelayMessage): boolean {
+    return this.options.triage !== undefined && fromCustomer(message) && this.notifies(message);
   }
 
   /**
@@ -102,36 +112,36 @@ export class Notifier {
   }
 
   /**
-   * Whether the triage bot is called for a customer message, or a note when a routing kind
-   * handled it or the bot's hourly budget is used up.
+   * Whether the triage bot is called for customer message `messageId`, the latest of the run, or
+   * the note that says why not: a reply `answered` it, the conversation is no longer open, or a
+   * budget is used up. Decided and counted once per message, so a retry repeats the decision.
    */
-  private async triage(message: RelayMessage): Promise<{ calls?: true; note?: string }> {
+  async triage(accountId: number, conversation: RelayConversation, messageId: number, answered: boolean) {
     const { triage, store } = this.options;
-    if (!fromCustomer(message)) return {};
-    if (!triage) return {};
-    const { account, conversation } = message;
-    // Decided and counted once per message: a retry after a failed post repeats the decision.
-    const decision = store.once(`triage:${account.id}:${message.id}`, () => {
-      if (conversation.status !== "open" || message.answered) return "answered";
+    if (!triage) return undefined;
+    const decision = store.once(`triage:${accountId}:${messageId}`, () => {
+      if (conversation.status !== "open" || answered) return "answered";
       const hour = this.options.now().toISOString().slice(0, 13);
-      const key = `${message.account.id}:${message.conversation.id}`;
-      if (store.increment(`triage:${key}:${hour}`) > triage.perConversationPerHour) return "conversation";
+      if (store.increment(`triage:${accountId}:${conversation.id}:${hour}`) > triage.perConversationPerHour) {
+        return "conversation";
+      }
       return `hour:${hour}`;
     });
-    if (decision === "answered") return { note: handledNote(triage) };
-    if (decision === "conversation") return { note: conversationBudgetNote(triage) };
+    const note = (text: string): TriageDecision => ({ note: text });
+    if (decision === "answered") return note(handledNote(triage));
+    if (decision === "conversation") return note(conversationBudgetNote(triage));
     // Decided by an earlier version, which counted the hourly budget in its own store.
-    if (decision === "hour") return { note: hourlyBudgetNote(triage) };
-    if (decision === "mention") return { calls: true };
+    if (decision === "hour") return note(hourlyBudgetNote(triage));
+    if (decision === "mention") return { call: true } as const;
     const hour = decision.slice("hour:".length);
-    const event = `${account.id}:${message.id}`;
+    const event = `${accountId}:${messageId}`;
     const reserve =
       this.options.reserveTriage ??
       (async () =>
         store.once(`triage-hour:${event}`, () => (store.increment(`triage:${hour}`) <= triage.perHour ? "1" : "")) ===
         "1");
-    if (!(await reserve(hour, event))) return { note: hourlyBudgetNote(triage) };
-    return { calls: true };
+    if (!(await reserve(hour, event))) return note(hourlyBudgetNote(triage));
+    return { call: true } as const;
   }
 
   /** The linked Discord user of the conversation's assignee, if any. */
@@ -151,7 +161,7 @@ export function triageLine(triage: TriageOptions): string {
 }
 
 function conversationBudgetNote(triage: TriageOptions): string {
-  return `-# ${triage.name} not called: more than ${triage.perConversationPerHour} customer messages in this conversation this hour. Ask it here if needed.`;
+  return `-# ${triage.name} not called: called ${triage.perConversationPerHour} times in this conversation this hour. Ask it here if needed.`;
 }
 
 function handledNote(triage: TriageOptions): string {
@@ -159,5 +169,5 @@ function handledNote(triage: TriageOptions): string {
 }
 
 function hourlyBudgetNote(triage: TriageOptions): string {
-  return `-# ${triage.name} not called: more than ${triage.perHour} customer messages this hour. Ask it here if needed.`;
+  return `-# ${triage.name} not called: called ${triage.perHour} times this hour. Ask it here if needed.`;
 }

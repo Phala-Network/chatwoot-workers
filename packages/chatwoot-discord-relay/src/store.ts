@@ -91,6 +91,14 @@ const MIGRATIONS: string[] = [
    ALTER TABLE conversations ADD COLUMN customer_message_id TEXT;`,
   // triage_pending keeps an owed triage bot call across failed attempts.
   `ALTER TABLE conversations ADD COLUMN triage_pending INTEGER;`,
+  // The triage bot's call is decided at the end of a run, for the customer's latest message
+  // (triage_message_id) and whether a reply followed it; a call owed by 0.33 is kept, for the last
+  // relayed message. Earlier versions' answering-reply scans are cleared.
+  `ALTER TABLE conversations ADD COLUMN triage_message_id INTEGER;
+   ALTER TABLE conversations ADD COLUMN triage_answered INTEGER;
+   UPDATE conversations SET triage_message_id = cursor WHERE triage_pending = 1;
+   ALTER TABLE conversations DROP COLUMN triage_pending;
+   DELETE FROM cache WHERE key LIKE 'answer-scan:%';`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;
@@ -111,7 +119,8 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
   ["cursor", "cursor"],
   ["announcedAssignee", "announced_assignee"],
   ["announcePending", "announce_pending"],
-  ["triagePending", "triage_pending"],
+  ["triageMessageId", "triage_message_id"],
+  ["triageAnswered", "triage_answered"],
   ["titleSubject", "title_subject"],
   ["title", "title"],
   ["titleMessageId", "title_message_id"],
@@ -136,14 +145,6 @@ export interface ConversationExport {
 }
 
 export class Store extends QueueStore implements RelayStore, Cache {
-  /** A changed reply can qualify even on an already-scanned page. No notification was decided yet. */
-  invalidateAnswerScans(accountId: number, conversationId: number): boolean {
-    return (
-      this.sql.exec("DELETE FROM cache WHERE key LIKE ?", `answer-scan:${accountId}:${conversationId}:%`).rowsWritten >
-      0
-    );
-  }
-
   override migrate(): void {
     this.sql.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
     const row = this.sql.exec<{ version: number }>("SELECT version FROM schema_version").toArray()[0];
@@ -166,7 +167,8 @@ export class Store extends QueueStore implements RelayStore, Cache {
         cursor: number | null;
         announced_assignee: string | null;
         announce_pending: number | null;
-        triage_pending: number | null;
+        triage_message_id: number | null;
+        triage_answered: number | null;
         title_subject: string | null;
         title: string | null;
         title_message_id: number | null;
@@ -189,7 +191,8 @@ export class Store extends QueueStore implements RelayStore, Cache {
       cursor: row.cursor ?? undefined,
       announcedAssignee: row.announced_assignee ?? undefined,
       announcePending: row.announce_pending ?? undefined,
-      triagePending: row.triage_pending ?? undefined,
+      triageMessageId: row.triage_message_id ?? undefined,
+      triageAnswered: row.triage_answered ?? undefined,
       titleSubject: row.title_subject ?? undefined,
       title: row.title ?? undefined,
       titleMessageId: row.title_message_id ?? undefined,
@@ -283,7 +286,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
     this.sql.exec(
       `INSERT INTO conversations (account_id, conversation_id, thread_id, card_id) VALUES (?, ?, ?, ?)
        ON CONFLICT (account_id, conversation_id) DO UPDATE SET thread_id = excluded.thread_id, state = NULL,
-         announced_assignee = NULL, announce_pending = NULL, triage_pending = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
+         announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
          card_id = excluded.card_id, card_covered = NULL, answer_id = NULL, answer_source_id = NULL,
          customer_message_id = NULL`,
       accountId,
@@ -413,7 +416,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
 
   forgetThread(accountId: number, conversationId: number): void {
     this.sql.exec(
-      `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, announce_pending = NULL, triage_pending = NULL,
+      `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL,
          title_subject = NULL, title = NULL, title_message_id = NULL, card_id = NULL, card_covered = NULL, answer_id = NULL,
          answer_source_id = NULL, customer_message_id = NULL
        WHERE account_id = ? AND conversation_id = ?`,

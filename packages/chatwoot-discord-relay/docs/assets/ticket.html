@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
-  Illustration of one ticket post: the ticket header that opens it, a customer message that
-  mentions a triage bot, an activity line with the new assignee's ping, the bot's answer with its
+  Illustration of one ticket post: the ticket header that opens it, a customer message, an
+  activity line with the new assignee's ping, the notice that calls a triage bot, the bot's answer with its
   draft, a private note (agents show their own avatars), and the ticket's card at the bottom (see
   ticketCard in src/commands/components.ts), led by Reply with draft for that answer. Every name,
   address, and ticket is fictional. Regenerate docs/assets/ticket.png with docs/assets/render.sh.
@@ -127,7 +127,6 @@
             Hi! Since we rotated the webhook signing key this morning, every delivery to our endpoint fails with 401. We
             already updated the secret on our side. Any idea?
           </p>
-          <p class="sub"><span class="mention">@Triage bot</span></p>
           <div class="reactions">
             <span class="reaction"><span class="e">👀</span>1</span>
           </div>
@@ -144,12 +143,17 @@
           <p class="sub">Assigned to <span class="mention">@Sam Carter</span></p>
         </div>
       </div>
+      <div class="message">
+        <div class="content">
+          <p class="sub"><span class="mention">@Triage bot</span> Triage the customer's latest message.</p>
+        </div>
+      </div>
 
       <div class="group">
         <div class="reply">
-          <svg aria-hidden="true" class="mini"><use href="#contact" /></svg><span class="badge">APP</span
-          ><span class="who">Dana Whitfield</span
-          ><span class="quote">Hi! Since we rotated the webhook signing key this morning, every delivery to our endpoint fails with 401.</span>
+          <svg aria-hidden="true" class="mini"><use href="#chatwoot" /></svg><span class="badge">APP</span
+          ><span class="who">Chatwoot</span
+          ><span class="quote">@Triage bot Triage the customer's latest message.</span>
         </div>
         <div class="message">
           <svg aria-hidden="true" class="avatar"><use href="#bot" /></svg>

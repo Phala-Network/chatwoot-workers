@@ -19,7 +19,7 @@ const CONVERSATION_EVENTS = new Set(["conversation_updated", "conversation_statu
  * jobs (EventDispatcherJob, then WebhookJob on `medium`), so the activity usually exists
  * already; the wait covers a busy queue. Anything later is picked up by the sweep.
  */
-export const ACTIVITY_WAIT_MS = 10_000;
+const ACTIVITY_WAIT_MS = 10_000;
 
 type WebhookTarget =
   | { type: "conversation"; accountId: number; conversationId: number; delayMs: number }

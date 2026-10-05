@@ -22,6 +22,7 @@ import { Store } from "../src/store.ts";
 import { ALICE, BOB, json, mockFetch, on, type Recorded, type Route, TRIAGE } from "./helpers.ts";
 
 const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
+const HANDLED = "-# Triage bot not called: handled automatically. Ask it here, if needed.";
 
 const FORUM = "100000000000000055";
 const GUILD = "100000000000000044";
@@ -692,7 +693,8 @@ describe("worker", () => {
     await drain();
     expect(world.webhookPosts().map((post) => post.body.content)).toEqual([
       expect.stringContaining("Open in Chatwoot"),
-      "thanks, solved\n-# Triage bot not called: handled automatically. Ask it here, if needed.",
+      "thanks, solved",
+      HANDLED,
     ]);
     // The first update failed; the retry unarchives with the tags, then archives.
     expect(world.sent("PATCH", /^\/api\/v10\/channels\/\d+$/).map((request) => JSON.parse(request.body))).toEqual([
@@ -1469,7 +1471,7 @@ describe("worker", () => {
     },
   );
 
-  it("rechecks a failed middle-page reply retried as sent before the first triage decision", async () => {
+  it("decides with a middle-page reply retried as sent while the run yielded", async () => {
     const id = 79;
     const reply = { id: 150, content: "The answer", message_type: 1, status: "failed" };
     world.conversation(id, [
@@ -1489,10 +1491,6 @@ describe("worker", () => {
       const services = { settings, store, budget, chatwoot, rest, forum, relay, claimThread: async () => true };
       expect(await processConversation(services, 3, id)).toBe("yield");
     });
-    expect(world.webhookPosts()).toEqual([]);
-    expect(world.sent("GET", /\/messages$/).some((request) => request.url.searchParams.get("after") === "301")).toBe(
-      true,
-    );
     reply.status = "sent";
     // Chatwoot's native retry changes the same message and dispatches message_updated.
     await chatwootWebhook({
@@ -1504,9 +1502,9 @@ describe("worker", () => {
     });
     await chatwootWebhook(created(id)); // Resume the yielded conversation as the next alarm would.
     await drain();
-    const customer = world.webhookPosts().find((post) => String(post.body.content).startsWith("A customer request"));
-    expect(customer?.body.content).toContain("handled automatically");
-    expect(customer?.body.content).not.toContain("<@100000000000000777>");
+    const contents = world.webhookPosts().map((post) => String(post.body.content));
+    expect(contents.at(-1)).toBe(HANDLED);
+    expect(contents).not.toContain(CALL);
   }, 15000); // 300 messages to page through.
 
   it("relays a message a kind's reply answered after routing, without calling the triage bot", async () => {
@@ -1546,12 +1544,9 @@ describe("worker", () => {
         secret: "secret-globex",
       },
     );
-    await vi.waitFor(() => expect(world.webhookPosts().length).toBeGreaterThan(1), { timeout: 5000, interval: 50 });
-
-    const relayed = world.webhookPosts().map((post) => String(post.body.content ?? ""));
-    const message = relayed.find((content) => content.startsWith("I would like to apply"));
-    expect(message).toMatch(/not called: handled automatically/);
-    expect(relayed.some((content) => content.includes("<@100000000000000777>"))).toBe(false);
+    const relayed = () => world.webhookPosts().map((post) => String(post.body.content ?? ""));
+    await vi.waitFor(() => expect(relayed()).toContain(HANDLED), { timeout: 5000, interval: 50 });
+    expect(relayed()).not.toContain(CALL);
   });
 
   it("closes the post when a command finds its conversation deleted", async () => {

@@ -55,15 +55,25 @@ export class MemoryStore implements RelayStore {
   conversation(a: number, c: number) {
     const row = this.rows.get(`${a}:${c}`);
     if (!row) return undefined;
-    const { threadId, state, announcedAssignee, announcePending, triagePending, titleSubject, title, titleMessageId } =
-      row;
+    const {
+      threadId,
+      state,
+      announcedAssignee,
+      announcePending,
+      triageMessageId,
+      triageAnswered,
+      titleSubject,
+      title,
+      titleMessageId,
+    } = row;
     const { cardId, cardCovered, answerId, answerSourceId, customerMessageId } = row;
     return {
       threadId,
       state,
       announcedAssignee,
       announcePending,
-      triagePending,
+      triageMessageId,
+      triageAnswered,
       titleSubject,
       title,
       titleMessageId,

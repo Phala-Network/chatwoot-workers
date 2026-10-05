@@ -37,7 +37,9 @@ The call is the last message of the run, so when the agent sees it, the customer
 everything posted with them are already in the post, and nothing the run posts follows it. A run
 with several such customer messages calls the agent once. The agent reads the post's recent
 messages to see what to answer (an agent that only reads the message that mentions it sees just
-the call). A conversation that is no longer open by the end of the run is not called.
+the call). When a public reply (a person's or a bot's) followed the customer's latest message,
+or the conversation is no longer open by the end of the run, the agent is not called, and a note
+says so: `-# Triage bot not called: handled automatically. Ask it here, if needed.`
 
 The mention is a literal token in the message content; Discord sends no notification for it
 (the relay's `allowed_mentions` leaves it out), so nobody is pinged by it. Only customer
@@ -48,11 +50,10 @@ do automatic email replies (out of office, for example), nor customer messages c
 `reconcile.lookbackSeconds` (an hour by default) before they are relayed: the history posted when
 an older conversation gets its post, or messages caught up after downtime.
 
-When a conversation has had more than `perConversationPerHour` customer messages in the current
-hour (UTC clock hour), or all conversations together more than `perHour`, the message gets a note
-such as
-`-# Triage bot not called: more than 30 customer messages this hour. Ask it here if needed.`
-instead of calling the agent. A message counts once, however often its posting is retried.
+When the agent was already called `perConversationPerHour` times in the conversation in the
+current hour (UTC clock hour), or `perHour` times in all conversations together, a note such as
+`-# Triage bot not called: called 30 times this hour. Ask it here if needed.`
+takes the place of the call. A call counts once, however often the run is retried.
 
 The agent must:
 

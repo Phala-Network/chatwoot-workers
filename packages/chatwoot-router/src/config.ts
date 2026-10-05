@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { ConfigError, describe, jsonRecord } from "../../../shared/config.ts";
 
-export { ConfigError } from "../../../shared/config.ts";
 
 const accountId = z
   .string()

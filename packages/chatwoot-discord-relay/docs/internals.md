@@ -66,11 +66,10 @@ at most `reconcile.maxCatchUpSeconds`), one page per job, continuing where it st
 conversation to its object, which queues it when its post is behind or its tags or state differ. Activity means a new message. A change without one (for example only the topic
 attribute) relies on its webhook, and so do deletions, responses, and delivery failures of
 messages already relayed: the sweep does not re-read relayed messages, so a missed webhook for
-one is not repaired. The sweep also retains unfinished answer-scan cursors: a lost update webhook for a failed
-reply retried as sent on a skipped page is not recovered, even before the customer's first post. Chatwoot's
-message API pages by ID without an update cursor; the retry keeps its ID. This can cause at most one extra
-triage call per affected customer message, within notification budgets, without losing the message. See the
-README's [How it works](../README.md#how-it-works) for the notification contract.
+one is not repaired. The triage bot's call is decided when a run ends, from the replies the run relayed after
+the customer's latest message, as Chatwoot reported them then: a reply that failed and was retried as sent
+before a lost webhook relayed it again can cause one extra call, within the budgets. See the README's
+[How it works](../README.md#how-it-works) for the notification contract.
 Neither does it read the post back from Discord: a title, tag, or archived
 flag changed by hand in Discord stays until the conversation changes.
 
@@ -104,8 +103,8 @@ describe the fields the API returns (see the repository's `shared/chatwoot/api.t
 AI routing lives in chatwoot-router as a native account agent bot, with its own queue and decision memo.
 The relay queues no routing jobs and reads no router storage. A pending bot-inbox conversation holds its
 conversation job: it is read again once shortly (a racing status webhook), then every five minutes, and a
-status webhook releases it at once. The current status
-and subsequent public answering replies decide triage. `assignee_type` prevents bot ids from matching human
+status webhook releases it at once. At the end of a run, the conversation's status and whether a public reply
+followed the customer's latest message decide triage. `assignee_type` prevents bot ids from matching human
 agents. Manage keeps all labels in `router.keepLabels`. See the package README's "How it works" for the model
 and its migration/rollback contract. Shared implementations live in the repository's `shared/` source tree
 and are bundled independently into each published package.
