@@ -28,10 +28,21 @@ export class ChatwootError extends Error {
  * A conversation as returned by GET conversations/{id} and in the conversation list. The spec's
  * `status` enum omits `snoozed`, which the API does return, so the relay treats it as a string.
  */
-export type ChatwootConversation = components["schemas"]["conversation_show"] & {
+export type ChatwootConversation = Omit<components["schemas"]["conversation_show"], "snoozed_until"> & {
   // EventDataPresenter#push_meta; omitted from the published v4.18.0 schema.
   meta?: { assignee_type?: string | null };
+  // The spec says a number, but the conversation partial renders the datetime as ISO 8601
+  // (`json.snoozed_until conversation.snoozed_until`). Null unless snoozed until a time. The number
+  // stays in the type only so the generated responses still fit it.
+  snoozed_until?: string | number | null;
 };
+
+/** Unix seconds when a snoozed conversation reopens; null unless it is snoozed until a time. */
+export function snoozedUntil(conversation: ChatwootConversation): number | null {
+  const value = conversation.snoozed_until;
+  const ms = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+}
 
 const text = z.string().nullish();
 
@@ -514,6 +525,7 @@ export function toRelayConversation(conversationId: number, conversation: Chatwo
     assignee: assignee ? { id: assignee.id, name: assignee.name } : null,
     assigneeType: meta?.assignee_type ?? null,
     waitingSince: conversation.waiting_since || null,
+    snoozedUntil: snoozedUntil(conversation),
     customAttributes: conversation.custom_attributes ?? {},
   };
 }

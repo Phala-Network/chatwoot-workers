@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-05
+
+### Added
+
+- A ticket snoozed until a time shows when it wakes, on its card (`⏰ Wakes in 2 hours`) and in the support queue,
+  as a Discord timestamp the client keeps current. Chatwoot's `snoozed_until` is read as the ISO 8601 time its API
+  returns (the published schema says a number).
+
 ## [0.39.0] - 2026-10-05
 
 ### Changed
@@ -792,7 +800,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.39.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.0...HEAD
+[0.40.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.39.0...chatwoot-discord-relay@0.40.0
 [0.39.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.38.0...chatwoot-discord-relay@0.39.0
 [0.38.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.37.0...chatwoot-discord-relay@0.38.0
 [0.37.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.36.0...chatwoot-discord-relay@0.37.0
