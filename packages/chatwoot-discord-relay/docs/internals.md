@@ -48,8 +48,8 @@ is backing off, new events for it wait for its next attempt.
 
 ## Relaying
 
-`src/relay/`. A webhook only queues "sync conversation N" (conversation events wait 10 seconds
-first, for Chatwoot to create the change's activity message, which sends no webhook). The job
+`src/relay/`. A webhook only queues "sync conversation N", at once (the activity message of a
+change, which sends no webhook, exists by then; one created later is relayed by the sweep). The job
 fetches the conversation and the messages after its cursor, posts them in order, then corrects
 tags and the archived flag once. Each Discord message is recorded as soon as it is accepted and
 the cursor moves past a Chatwoot message once all its parts are posted, so duplicate, reordered,

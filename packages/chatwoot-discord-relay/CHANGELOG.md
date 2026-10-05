@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A conversation event (an assignment, a status change) is synced at once instead of after 10 seconds: Chatwoot
+  creates the change's activity line on its `high` queue before the event's webhook goes out, so it is posted right
+  after the command's result. One created later is the conversation's latest activity, which the sweep relays.
+
 ## [0.36.0] - 2026-10-05
 
 ### Removed

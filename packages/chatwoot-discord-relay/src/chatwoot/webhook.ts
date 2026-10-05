@@ -11,18 +11,14 @@ export { isFreshTimestamp, verifyChatwootSignature } from "../../../../shared/ch
 
 const CONVERSATION_EVENTS = new Set(["conversation_updated", "conversation_status_changed"]);
 
-/**
- * How long a conversation event waits before its sync. The activity message for a change
- * ("Assigned to …", "Resolved by …") is created afterwards by Conversations::ActivityMessageJob
- * on Sidekiq's `high` queue, and activity messages send no webhook (`webhook_sendable?` in
- * app/models/concerns/message_filter_helpers.rb at v4.18.0). The event's own webhook takes two
- * jobs (EventDispatcherJob, then WebhookJob on `medium`), so the activity usually exists
- * already; the wait covers a busy queue. Anything later is picked up by the sweep.
- */
-const ACTIVITY_WAIT_MS = 10_000;
+// A conversation event is synced at once. The activity message for its change ("Assigned to …",
+// "Resolved by …") sends no webhook (`webhook_sendable?` in app/models/concerns/message_filter_helpers.rb
+// at v4.18.0), but Conversations::ActivityMessageJob creates it on Sidekiq's `high` queue, while the
+// event's webhook takes two jobs (EventDispatcherJob, then WebhookJob on `medium`): it is there by
+// then. One created later still updates the conversation's last activity, so the sweep relays it.
 
 type WebhookTarget =
-  | { type: "conversation"; accountId: number; conversationId: number; delayMs: number }
+  | { type: "conversation"; accountId: number; conversationId: number }
   | { type: "message-updated"; accountId: number; conversationId: number; messageId: number };
 
 /**
@@ -34,7 +30,6 @@ type WebhookTarget =
  * (MessagesController#destroy); a customer's response to an interactive message, which sets
  * `submitted_values` or `submitted_email` (Widget::MessagesController#update); and an outgoing
  * message whose delivery status can change (including failed replies retried as sent).
- * Outgoing updates invalidate unfinished answer scans before the first notification decision.
  * The payload does not say what changed, so any update of such a message is queued; the job posts once.
  */
 export function eventTarget(payload: unknown): WebhookTarget | undefined {
@@ -42,13 +37,11 @@ export function eventTarget(payload: unknown): WebhookTarget | undefined {
   const accountId = isRecord(payload.account) ? payload.account.id : undefined;
   if (!isPositiveInteger(accountId)) return undefined;
   if (CONVERSATION_EVENTS.has(payload.event)) {
-    return isPositiveInteger(payload.id)
-      ? { type: "conversation", accountId, conversationId: payload.id, delayMs: ACTIVITY_WAIT_MS }
-      : undefined;
+    return isPositiveInteger(payload.id) ? { type: "conversation", accountId, conversationId: payload.id } : undefined;
   }
   const conversationId = isRecord(payload.conversation) ? payload.conversation.id : undefined;
   if (!isPositiveInteger(conversationId)) return undefined;
-  if (payload.event === "message_created") return { type: "conversation", accountId, conversationId, delayMs: 0 };
+  if (payload.event === "message_created") return { type: "conversation", accountId, conversationId };
   if (payload.event !== "message_updated" || !isPositiveInteger(payload.id)) return undefined;
   const attributes = isRecord(payload.content_attributes) ? payload.content_attributes : {};
   const deleted = attributes.deleted === true;
