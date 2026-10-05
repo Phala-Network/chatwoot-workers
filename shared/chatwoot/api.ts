@@ -496,7 +496,7 @@ export function personAssignee(conversation: ChatwootConversation) {
 }
 
 /** An actual public answer; Chatwoot templates include greetings and out-of-office notices. */
-export function isAnsweringReply(message: ChatwootMessage): boolean {
+function isAnsweringReply(message: ChatwootMessage): boolean {
   return (
     message.message_type === 1 &&
     !message.private &&
