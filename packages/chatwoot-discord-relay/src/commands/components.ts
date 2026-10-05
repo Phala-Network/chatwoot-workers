@@ -106,6 +106,8 @@ export interface CardTicket {
   /** The assignee's name; null when unassigned. */
   assignee: string | null;
   labels: string[];
+  /** Unix seconds since the customer has waited for a reply; null when nobody owes them one. */
+  waitingSince: number | null;
 }
 
 /** A card's accent: the ticket's status at a glance. */
@@ -140,6 +142,8 @@ export function ticketCard(ticket: CardTicket, answerId?: string): APIMessageTop
     `👉 ${assignee ? `**${clip(assignee, CARD_TEXT)}**` : "Unassigned"}`,
     ...ticket.labels.slice(0, CARD_LABELS).map((label) => `🏷️ ${clip(label, CARD_TEXT)}`),
     ...(more > 0 ? [`+${more}`] : []),
+    // Discord shows the time relative to now, kept current by the client ("5 minutes ago").
+    ...(ticket.waitingSince ? [`⏳ Asked <t:${ticket.waitingSince}:R>`] : []),
   ].join(" · ");
   // The customer's name and details are their own text: they must not mention anyone.
   const heading = `### ${clip(ticket.title, CARD_TEXT)} · ${defused(clip(ticket.customer, CARD_TEXT))}`;

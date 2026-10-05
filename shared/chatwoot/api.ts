@@ -513,6 +513,7 @@ export function toRelayConversation(conversationId: number, conversation: Chatwo
     },
     assignee: assignee ? { id: assignee.id, name: assignee.name } : null,
     assigneeType: meta?.assignee_type ?? null,
+    waitingSince: conversation.waiting_since || null,
     customAttributes: conversation.custom_attributes ?? {},
   };
 }

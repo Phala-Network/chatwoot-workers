@@ -653,6 +653,7 @@ export class Relay {
       status: conversation.status ?? "open",
       assignee: assignee ? (assignee.name ?? `#${assignee.id ?? "?"}`) : null,
       labels: conversation.labels,
+      waitingSince: conversation.status === "resolved" ? null : (conversation.waitingSince ?? null),
     };
   }
 
