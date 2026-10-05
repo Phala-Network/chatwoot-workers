@@ -11,7 +11,8 @@ What the relay posts in a ticket's forum post, and how it handles the less commo
   message>`. It opens with a ticket header (channel, inbox, customer email, phone number on phone
   channels, "Open in Chatwoot" link), and every message follows it. Bots act on a post's replies
   but not on its opening message, so the header lets the first customer message reach a triage
-  bot like any other.
+  bot like any other. With `customerContext`, the customer's context follows the header, before the
+  first message, and is kept current in place ([Customer context](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/README.md#customer-context)).
 - Messages are posted through the forum webhook, so each shows its sender's name and avatar:
   customers (their https Chatwoot avatar, else `avatars.contact`), agents as `Name · Account`, agent
   bots by their name and https Chatwoot avatar (else `avatars.chatwoot`), and
