@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-05
+
+### Changed
+
+- The support queue shows when each customer asked as a Discord timestamp the client keeps relative
+  (`⏳ 3 hours ago`), like the card, instead of a wait rounded when the queue was posted; its header counts the
+  open tickets waiting for a reply and those with no assignee instead of repeating the posting time, and its
+  fields are separated by `·` like the card's.
+
 ## [0.38.0] - 2026-10-05
 
 ### Added
@@ -783,7 +792,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.38.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.39.0...HEAD
+[0.39.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.38.0...chatwoot-discord-relay@0.39.0
 [0.38.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.37.0...chatwoot-discord-relay@0.38.0
 [0.37.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.36.0...chatwoot-discord-relay@0.37.0
 [0.36.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.1...chatwoot-discord-relay@0.36.0

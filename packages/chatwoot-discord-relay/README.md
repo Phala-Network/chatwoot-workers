@@ -401,8 +401,9 @@ came in between). The hook is a convenience: if a call is lost, the card offers 
 
 With `queue`, the cron run at minute 0 of every hour posts a message in `queue.channelId` that lists
 the open tickets of every account whose customer waits for a reply (Chatwoot's `waiting_since`) or
-that have no assignee, longest wait first: each line is the ticket's post (or its dashboard link),
-how long the customer has waited, and its assignee, whom it pings when they are a linked agent. A
+that have no assignee, longest wait first. Its header counts the open tickets waiting for a reply
+and those with no assignee; each line is the ticket's post (or its dashboard link), when the customer
+asked (a Discord timestamp each reader sees as relative, "3 hours ago"), and its assignee, whom it pings when they are a linked agent. A
 ticket with no assignee pings `queue.escalationRoleId` (or `escalationUserId`) after its customer
 has waited 1, 2, 4, 8, and 16 hours, and every 24 hours after that, once per step, until someone
 takes it or replies. Snoozed tickets and pending bot turns are listed after them, marked 💤 and 🤖 respectively,
