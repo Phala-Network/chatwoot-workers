@@ -69,7 +69,7 @@ app.post("/chatwoot/webhook", bodyLimit({ maxSize: 2 * 1024 * 1024 }), async (c)
   if (target.type === "message-updated") {
     await stub.enqueueMessageUpdate(target.accountId, target.conversationId, target.messageId);
   } else {
-    await stub.enqueueConversation(target.accountId, target.conversationId, target.delayMs);
+    await stub.enqueueConversation(target.accountId, target.conversationId);
   }
   return c.json({ ok: true });
 });

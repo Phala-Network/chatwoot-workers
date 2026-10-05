@@ -1070,18 +1070,15 @@ describe("worker", () => {
     });
   });
 
-  it("syncs a conversation event after a short wait, so the change's activity message is posted with it", async () => {
+  it("syncs a conversation event at once, with the change's activity message; a later one comes with the sweep", async () => {
     world.conversation(30, [{ id: 3001, content: "hello", message_type: 0 }]);
     await chatwootWebhook(created(30));
     await drain();
     const conversation = world.conversations.get(30);
     if (conversation) conversation.status = "resolved";
-    await chatwootWebhook({ event: "conversation_status_changed", id: 30, account: { id: 3 } });
-    // Chatwoot creates "Resolved by …" afterwards, and sends no webhook for it.
+    // Chatwoot creates "Resolved by …" before the event's webhook goes out, and sends no webhook for it.
     conversation?.messages.push({ id: 3002, content: "Resolved by Sam", message_type: 2 });
-    expect(await jobDelay("conversation:3:30")).toBeGreaterThan(5000);
-
-    await makeJobsDue();
+    await chatwootWebhook({ event: "conversation_status_changed", id: 30, account: { id: 3 } });
     await drain();
     expect(world.webhookPosts().at(-1)?.body.content).toBe("_Resolved by Sam_");
     expect(world.sent("PATCH", /^\/api\/v10\/channels\/\d+$/).map((request) => JSON.parse(request.body))).toEqual([
@@ -1091,12 +1088,18 @@ describe("worker", () => {
 
     if (conversation) conversation.status = "open";
     await chatwootWebhook({ event: "conversation_updated", id: 30, account: { id: 3 } });
-    await makeJobsDue();
     await drain();
     expect(JSON.parse(world.sent("PATCH", /^\/api\/v10\/channels\/\d+$/).at(-1)?.body ?? "")).toEqual({
       archived: false,
       applied_tags: ["100000000000000301", "100000000000000302"],
     });
+    // An activity message Chatwoot creates after the event is the conversation's latest activity: the sweep relays it.
+    conversation?.messages.push({ id: 3003, content: "Conversation was reopened by Sam", message_type: 2 });
+    if (conversation) conversation.lastActivityAt = Math.floor(Date.now() / 1000);
+    await sweep();
+    await vi.waitFor(() =>
+      expect(world.webhookPosts().at(-1)?.body.content).toBe("_Conversation was reopened by Sam_"),
+    );
   });
 
   it("keeps retrying a job that keeps failing, at most every 30 minutes, so an outage loses nothing", async () => {

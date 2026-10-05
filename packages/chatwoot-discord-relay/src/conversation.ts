@@ -86,13 +86,9 @@ export class Conversation extends DurableObject<Env> {
     this.store.migrate();
   }
 
-  /**
-   * Queues the conversation for syncing, at the earliest after `delayMs`; at once while a customer
-   * message is held, since the bot's turn may have ended.
-   */
-  async enqueueConversation(accountId: number, conversationId: number, delayMs = 0): Promise<void> {
-    const delay = this.store.get(HELD_KEY) === undefined ? delayMs : 0;
-    this.enqueue({ type: "conversation", accountId, conversationId }, Date.now() + delay);
+  /** Queues the conversation for syncing at once, also while a customer message is held: the bot's turn may have ended. */
+  async enqueueConversation(accountId: number, conversationId: number): Promise<void> {
+    this.enqueue({ type: "conversation", accountId, conversationId });
     await this.schedule();
   }
 
