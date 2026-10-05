@@ -148,37 +148,6 @@ the Router DO during rollback. If its state is lost or restored to an older reco
 and isolate conversations with uncertain attempts/turns for owner review; a currently empty history does not
 prove another send is safe. Existing pending conversations are reconciled; non-pending conversations stay with people. The user token must see all relevant inboxes.
 
-For the first move from the relay's built-in routing (production baseline 0.27.0):
-
-1. Record the live relay deployment/version id and CONFIG_KEY before rollout; retain its Hub and old secrets.
-   Disconnect all brand bots and prevent competing old deployments. Verify bot identities, owner membership,
-   labels, canned responses and inbox visibility. Historical confirmed brand-bot replies need no ledger migration.
-2. Deploy and verify relay 0.30 first. Remove `routing`, `router.accounts` and `router.waitSeconds`; keep every kind
-   in `router.keepLabels`. Verify the actual version and that built-in routing/in-flight old work stopped.
-3. Bootstrap this Worker by hand with all four secrets in a protected secrets file while bots remain disconnected.
-   Verify KV/domain, upstream permissions and test tickets; health/2xx alone do not prove routing success.
-   If using an infra PR whose push deploys both Workers independently, merge only after both hand deployments pass.
-4. Connect bots one account at a time and verify real routing, handoff, failed/unknown reply handling, historical
-   reply deduplication and Discord/triage behavior, including at least a complete sweep.
-5. To roll back, disconnect bots first and **keep this router running until no pending ticket remains assigned to
-   a disconnected brand bot and no non-pending ticket remains assigned to that bot**. Complete pending/open
-   account passes and let failed ending releases finish through their durable retries: pending uses native bot
-   handoff, open leftovers use explicit unassignment, and kind endings release resolved/snoozed tickets in the
-   same turn. Confirm cleared bot ownership across statuses; preserve human/other-bot owners. Then stop
-   webhook entry, cron and queued/in-flight router work; stopping cron alone does not cancel DO alarms. Preserve DO
-   namespace and storage, including reply and turn guards. Restore the recorded live 0.27 version **and its
-   CONFIG_KEY**, without overlapping old/new routing. Relay 0.27 uses its original Hub's
-   `kind-reply:<account>:<conversation>` records; the Router uses separate `reply:<account>:<conversation>`
-   records. Restoring code/config does not copy Router attempts into the Hub or reset either ledger. Only replies
-   already recorded by 0.27 retain its own reply-once protection; Router-only replies/unknown attempts can be
-   attempted again by 0.27. Keep both DOs and review/isolate those tickets before restoring old routing. Rollback
-   does not guarantee reply-once across this switch or undo sent messages or other mutations.
-
-Current router upgrades need no custom coordination attributes, compatibility effects or one-time lifecycle
-cleanup. Older unreadable job payloads are dropped; live snapshots and the account sweep reconstruct queued work, not durable reply/turn guards.
-If handoff credentials fail, repair them or let a real owner take the tickets; do not bulk-open with the integration
-user token, which can assign every ticket to that user. Keep old attributes through the owner's rollback window.
-
 Redaction is best effort, not anonymization: other personal information can still reach TypeSafe. Logs contain
 ids and outcomes, never message bodies or credentials. See [SECURITY.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/SECURITY.md),
 [CONTRIBUTING.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/CONTRIBUTING.md) and [CHANGELOG.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-router/CHANGELOG.md). Licensed under [MIT](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-router/LICENSE).

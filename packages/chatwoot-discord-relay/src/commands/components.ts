@@ -13,7 +13,7 @@ import {
   ButtonStyle,
   ComponentType,
 } from "discord-api-types/v10";
-import { defused } from "../relay/format.ts";
+import { clip, defused } from "../relay/format.ts";
 
 /** Custom ids of the ticket buttons and the menus they show. */
 export const BUTTONS = {
@@ -71,12 +71,6 @@ function button(
     ...(emoji ? { emoji: { name: emoji } } : {}),
     style,
   };
-}
-
-/** `text` cut to `max` characters, with an ellipsis when cut. */
-function clip(text: string, max: number): string {
-  const characters = Array.from(text);
-  return characters.length > max ? `${characters.slice(0, max - 1).join("")}…` : text;
 }
 
 function row(components: APIComponentInMessageActionRow[]): ActionRow {
