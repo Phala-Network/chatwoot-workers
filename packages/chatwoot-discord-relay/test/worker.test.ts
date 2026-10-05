@@ -1191,6 +1191,8 @@ describe("worker", () => {
   it("gives a post an earlier version left without a card its card, however long ago its ticket was active", async () => {
     const thread = "100000000000030034";
     await runInDurableObject(hub(), (_instance, state) => {
+      // A Hub that has not handed its conversations over yet.
+      state.storage.sql.exec("DELETE FROM cache WHERE key = 'handover'");
       state.storage.sql.exec(
         "INSERT INTO conversations (account_id, conversation_id, thread_id, cursor, state) VALUES (3, 134, ?, 13401, ?)",
         thread,
@@ -1317,6 +1319,41 @@ describe("worker", () => {
     release();
     await drain();
   });
+
+  it("hands every conversation an earlier version relayed to its own object once, a page per run", async () => {
+    const ids = Array.from({ length: 25 }, (_, index) => 3100 + index);
+    await runInDurableObject(hub(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM cache WHERE key = 'handover'");
+      for (const id of ids) {
+        state.storage.sql.exec(
+          "INSERT INTO conversations (account_id, conversation_id, thread_id, cursor, state, card_id) VALUES (3, ?, ?, ?, ?, ?)",
+          id,
+          `1000000000000${id}0`,
+          id * 10,
+          JSON.stringify(["resolved"]),
+          `1000000000000${id}1`,
+        );
+      }
+    });
+    await sweep();
+    await sweep();
+    for (const id of ids) {
+      const cursor = await runInDurableObject(
+        conversationObject(id),
+        (_instance, state) =>
+          state.storage.sql.exec<{ cursor: number }>("SELECT cursor FROM conversations").one().cursor,
+      );
+      expect(cursor).toBe(id * 10);
+    }
+    const done = await runInDurableObject(
+      hub(),
+      (_instance, state) =>
+        state.storage.sql.exec<{ value: string }>("SELECT value FROM cache WHERE key = 'handover'").one().value,
+    );
+    expect(done).toBe("done");
+    // Resolved tickets with their card: nothing is posted.
+    expect(world.webhookPosts()).toEqual([]);
+  }, 15000); // 25 conversations each start their own object.
 
   it("takes over what an earlier version's Hub recorded about a conversation", async () => {
     const thread = "100000000000030040";

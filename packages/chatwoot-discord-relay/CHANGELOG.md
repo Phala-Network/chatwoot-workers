@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The Hub hands every conversation an earlier version relayed to its own object once, a page per run, queued by the
+  cron until it logs `legacy hand-over done`; a post from before cards gets its card then, while its ticket is not
+  resolved. This replaces the sweep's daily card backfill, and prepares a release that drops the hand-over code.
+
 ## [0.34.0] - 2026-10-05
 
 ### Changed

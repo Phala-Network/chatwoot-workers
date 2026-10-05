@@ -5,7 +5,8 @@
 // background work.
 //
 // Earlier versions kept everything here, so its storage is where they left each conversation's
-// records: each conversation's own object takes them over on first use (see exportConversation).
+// records: each conversation's own object takes them over on first use (see exportConversation),
+// and the hand-over job gives every one of them to its object once (see handOverAll).
 
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
@@ -34,6 +35,7 @@ const id = z.number().int().positive();
 const payloadSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("sweep"), accountId: id }),
   z.object({ type: z.literal("queue") }),
+  z.object({ type: z.literal("handover") }),
   // Jobs for a conversation (queued by an earlier version, or by the sweep); each goes to its object.
   z.object({ type: z.literal("command"), job: commandJobSchema }),
   z.object({ type: z.literal("conversation"), accountId: id, conversationId: id }),
@@ -44,9 +46,9 @@ type JobPayload = z.infer<typeof payloadSchema>;
 
 const sweepPassSchema = z.object({ cutoff: z.number(), page: z.number().int().positive(), startedAt: z.number() });
 const PASS_TTL_MS = 24 * 60 * 60 * 1000;
-/** Posts without a card a sweep takes at most, and how long before one not yet handed over is taken again. */
-const CARD_BACKFILL_PER_SWEEP = 10;
-const CARD_BACKFILL_RETRY_MS = 24 * 60 * 60 * 1000;
+/** Conversations the hand-over job gives to their objects per run, and where it is (see handOverAll). */
+const HANDOVER_PER_RUN = 20;
+const HANDOVER_KEY = "handover";
 /** Stop draining and continue in a new invocation after this long. */
 const RUN_WALL_MS = 5 * 60 * 1000;
 /** How long the support queue may be posted after it is due: Discord's nonce check covers a few minutes. */
@@ -103,6 +105,7 @@ export class Hub extends DurableObject<Env> {
   async requestSweep(): Promise<void> {
     for (const account of (await loadSettings(this.env)).config.accounts)
       this.enqueue({ type: "sweep", accountId: account.id });
+    if (this.store.get(HANDOVER_KEY) !== "done") this.enqueue({ type: "handover" });
     await this.schedule();
   }
 
@@ -159,6 +162,9 @@ export class Hub extends DurableObject<Env> {
           // is retried or deferred, nothing is posted after that, so the queue and its pings are
           // never posted twice. Every attempt posts the same messages with the same nonces.
           await postQueue(context, job.createdAt, job.createdAt + QUEUE_RETRY_MS);
+          break;
+        case "handover":
+          await this.handOverAll(budget);
           break;
         default:
           budget.consume();
@@ -228,7 +234,6 @@ export class Hub extends DurableObject<Env> {
       });
       this.enqueue({ type: "conversation", accountId, conversationId });
     });
-    if (pass.page === 1) this.backfillCards(accountId);
     const seen = relayed.length;
     if (reachedCutoff) {
       // The next pass covers list movement while this pass ran.
@@ -241,8 +246,37 @@ export class Hub extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Gives every conversation an earlier version relayed to its own object, which takes over what
+   * was recorded here about it (and posts a missing card), a page per run, continuing where it
+   * stopped; a failure retries the job. Logs when every one was handed over: then the hand-over on
+   * first use and this job can go.
+   */
+  private async handOverAll(budget: Budget): Promise<void> {
+    const at = parseJson(this.store.get(HANDOVER_KEY));
+    const progress = z.object({ after: z.number(), count: z.number() }).safeParse(at);
+    let { after, count } = progress.success ? progress.data : { after: 0, count: 0 };
+    const page = this.store.relayedConversations(after, HANDOVER_PER_RUN);
+    for (const { row, accountId, conversationId } of page) {
+      budget.consume();
+      await conversationStub(this.env, accountId, conversationId).takeOver(accountId, conversationId);
+      after = row;
+      count += 1;
+      this.store.set(HANDOVER_KEY, JSON.stringify({ after, count }));
+    }
+    if (page.length < HANDOVER_PER_RUN) {
+      this.store.set(HANDOVER_KEY, "done");
+      log.info("legacy hand-over done", { conversations: count });
+    } else {
+      this.enqueue({ type: "handover" });
+    }
+  }
+
   /** A conversation's job, queued here by an earlier version or by the sweep, given to its conversation's object. */
-  private async handOver(job: Job, payload: Exclude<JobPayload, { type: "sweep" | "queue" }>): Promise<void> {
+  private async handOver(
+    job: Job,
+    payload: Exclude<JobPayload, { type: "sweep" | "queue" | "handover" }>,
+  ): Promise<void> {
     if (payload.type === "command") {
       const command: CommandJob = payload.job;
       await conversationStub(this.env, command.accountId, command.conversationId).enqueueCommand(
@@ -267,22 +301,6 @@ export class Hub extends DurableObject<Env> {
       }
     }
     await stub.enqueueConversation(accountId, conversationId);
-    // Its sync gives the post a card when it has none: the post needs no backfill any more.
-    this.store.set(`card-backfill:${accountId}:${conversationId}`, "1");
-  }
-
-  /**
-   * Hands a few of the account's posts that an earlier version left without a card (from before
-   * cards), and whose ticket is not resolved, to their conversations, however long ago their last
-   * activity: by jobs that retry until they succeed, each taken again daily until one does.
-   */
-  private backfillCards(accountId: number): void {
-    for (const conversationId of this.store.takePostsWithoutCard(
-      accountId,
-      CARD_BACKFILL_PER_SWEEP,
-      CARD_BACKFILL_RETRY_MS,
-    ))
-      this.enqueue({ type: "conversation", accountId, conversationId });
   }
 
   private enqueue(payload: JobPayload): void {
@@ -304,6 +322,8 @@ function jobKey(payload: JobPayload): string {
       return `sweep:${payload.accountId}`;
     case "queue":
       return "queue";
+    case "handover":
+      return HANDOVER_KEY;
     case "command":
       return `command:${payload.job.interactionId}`;
     case "answer":
@@ -317,6 +337,7 @@ function jobKey(payload: JobPayload): string {
 
 function requiredBudget(payload: JobPayload, settings: Settings): number {
   if (payload.type === "queue") return queueBudget(settings.config.accounts.length);
+  if (payload.type === "handover") return HANDOVER_PER_RUN;
   // A page of conversations, and one call per conversation in it.
   return payload.type === "sweep" ? 1 + CONVERSATIONS_PER_PAGE : 1;
 }

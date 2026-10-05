@@ -174,6 +174,19 @@ export class Conversation extends DurableObject<Env> {
     return this.store.get(answerKey(answerId)) ?? null;
   }
 
+  /**
+   * Takes over what the Hub of earlier versions recorded about the conversation, if it has not yet
+   * (see adopt). A post from before cards gets its card while its ticket is not resolved.
+   */
+  async takeOver(accountId: number, conversationId: number): Promise<void> {
+    await this.adopt(accountId, conversationId);
+    const row = this.store.conversation(accountId, conversationId);
+    if (row?.threadId && row.cardId === undefined && !row.state?.startsWith('["resolved"')) {
+      this.enqueue({ type: "conversation", accountId, conversationId });
+      await this.schedule();
+    }
+  }
+
   /** Cloudflare runs at most one alarm() at a time per Durable Object. */
   override async alarm(): Promise<void> {
     const settings = await loadSettings(this.env);
