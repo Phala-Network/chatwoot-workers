@@ -33,6 +33,13 @@ const AVATARS = {
 };
 
 const triage = { userId: TRIAGE, name: "Triage bot", perConversationPerHour: 5, perHour: 30 };
+const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
+
+/** What the processor does in a run of one message: relay it, then call the triage bot while a call is pending. */
+async function inRun(relay: Relay, relayed: RelayMessage): Promise<void> {
+  await relay.relay(relayed);
+  await relay.callTriage(relayed.account.id, relayed.conversation);
+}
 const resolved = { status: "resolved" };
 const tagsFor = (status: string) => ({ archived: false, applied_tags: ["t-acme", `t-${status}`] });
 
@@ -289,47 +296,49 @@ describe("Relay", () => {
     expect(forum.calls[2]?.[1].applied_tags).toEqual(["t-globex", "t-open"]);
   });
 
-  it("mentions the triage bot on customer messages only", async () => {
+  it("calls the triage bot after customer messages only, in a notice of its own after the message", async () => {
     ({ relay, forum } = relayWith({ triage }));
-    await relay.relay(message());
-    await relay.relay(message({ id: 102, content: "x ".repeat(1500) }));
-    await relay.relay(
+    await inRun(relay, message());
+    await inRun(relay, message({ id: 102, content: "x ".repeat(1500) }));
+    await inRun(
+      relay,
       message({ id: 103, messageType: "outgoing", content: "Try again", sender: { name: "Sam", type: "user" } }),
     );
-    await relay.relay(message({ id: 104, messageType: "outgoing", private: true, content: "Known issue" }));
-    await relay.relay(message({ id: 105, messageType: "activity", content: "Assigned to Sam" }));
+    await inRun(relay, message({ id: 104, messageType: "outgoing", private: true, content: "Known issue" }));
+    await inRun(relay, message({ id: 105, messageType: "activity", content: "Assigned to Sam" }));
     const contents = forum.contents();
-    expect(contents[0]).not.toContain(`<@${TRIAGE}>`); // ticket card
-    expect(contents[1]).toBe(`My agent will not connect\n-# <@${TRIAGE}>`);
-    // A split message carries the mention on its last part, so the bot sees all of it.
-    expect(contents[2]).not.toContain(`<@${TRIAGE}>`);
-    expect(contents[3]?.endsWith(`\n-# <@${TRIAGE}>`)).toBe(true);
-    expect(contents.slice(2, 4).every((content) => content.length <= CONTENT_LIMIT)).toBe(true);
-    expect(contents.filter((content) => content.includes(`<@${TRIAGE}>`))).toHaveLength(2);
+    expect(contents.slice(1, 3)).toEqual(["My agent will not connect", CALL]);
+    // The call follows all of a split message.
+    expect(contents.slice(3, 5).every((content) => !content.includes(`<@${TRIAGE}>`))).toBe(true);
+    expect(contents[5]).toBe(CALL);
+    expect(contents.slice(3, 5).every((content) => content.length <= CONTENT_LIMIT)).toBe(true);
+    expect(contents.filter((content) => content.includes(`<@${TRIAGE}>`))).toEqual([CALL, CALL]);
+    expect(forum.calls.at(-1)?.[1]).toMatchObject({ username: "Chatwoot", avatar_url: AVATARS.chatwoot });
     // Mentions never ping: the webhook message allows none.
     expect(forum.calls.every(([, payload]) => payload.allowed_mentions?.parse?.length === 0)).toBe(true);
   });
 
   it("does not call the triage bot for a message a routing kind's reply answered", async () => {
     ({ relay, forum } = relayWith({ triage }));
-    await relay.relay(message({ answered: true }));
-    await relay.relay(message({ id: 102, content: "One more thing" }));
-    const [answered, later] = forum.contents().slice(1);
-    expect(answered).toBe(
+    await inRun(relay, message({ answered: true }));
+    await inRun(relay, message({ id: 102, content: "One more thing" }));
+    expect(forum.contents().slice(1)).toEqual([
       "My agent will not connect\n-# Triage bot not called: handled automatically. Ask it here, if needed.",
-    );
-    expect(later).toBe(`One more thing\n-# <@${TRIAGE}>`);
+      "One more thing",
+      CALL,
+    ]);
   });
 
   it("calls the triage bot within its hourly budgets", async () => {
     ({ relay, forum } = relayWith({ triage }));
-    for (let i = 0; i < 7; i += 1) await relay.relay(message({ id: 200 + i, content: `msg ${i}` }));
-    const tagged = forum.contents().filter((content) => content.startsWith("msg"));
-    expect(tagged.filter((content) => content.endsWith(`<@${TRIAGE}>`))).toHaveLength(5);
-    expect(tagged.at(-1)).toMatch(/Triage bot not called: more than 5 customer messages in this conversation/);
+    for (let i = 0; i < 7; i += 1) await inRun(relay, message({ id: 200 + i, content: `msg ${i}` }));
+    expect(forum.contents().filter((content) => content === CALL)).toHaveLength(5);
+    expect(forum.contents().at(-1)).toMatch(
+      /Triage bot not called: more than 5 customer messages in this conversation/,
+    );
 
     for (let i = 0; i < 30; i += 1) {
-      await relay.relay(message({ id: 300 + i, conversation: { id: 1000 + i } }));
+      await inRun(relay, message({ id: 300 + i, conversation: { id: 1000 + i } }));
     }
     expect(forum.contents().at(-1)).toMatch(/Triage bot not called: more than 30 customer messages this hour/);
   });
@@ -341,33 +350,29 @@ describe("Relay", () => {
       forum.failThreadWith = "error";
       await expect(relay.relay(message({ id: 102, content: "retried" }))).rejects.toThrow();
     }
-    await relay.relay(message({ id: 102, content: "retried" }));
-    await relay.relay(message({ id: 103, content: "next" }));
-    expect(forum.contents().at(-1)?.endsWith(`<@${TRIAGE}>`)).toBe(true);
+    await inRun(relay, message({ id: 102, content: "retried" }));
+    await inRun(relay, message({ id: 103, content: "next" }));
+    expect(forum.contents().slice(-2)).toEqual(["next", CALL]);
   });
 
   it.each(["pending", "resolved", "snoozed"])(
     "preserves both triage allowances after %s messages, for later open requests",
     async (status) => {
       ({ relay, forum } = relayWith({ triage: { ...triage, perConversationPerHour: 2, perHour: 3 } }));
-      for (const id of [101, 102])
-        await relay.relay(message({ id, createdAt: NOW_SECONDS, content: `closed ${id}`, conversation: { status } }));
-      expect(
-        forum
-          .contents()
-          .filter((content) => content.startsWith("closed"))
-          .some((content) => content.includes(`<@${TRIAGE}>`)),
-      ).toBe(false);
-      for (const id of [103, 104]) await relay.relay(message({ id, createdAt: NOW_SECONDS, content: `open ${id}` }));
-      await relay.relay(
+      for (const id of [101, 102]) {
+        await inRun(relay, message({ id, createdAt: NOW_SECONDS, content: `closed ${id}`, conversation: { status } }));
+      }
+      expect(forum.contents()).not.toContain(CALL);
+      for (const id of [103, 104]) await inRun(relay, message({ id, createdAt: NOW_SECONDS, content: `open ${id}` }));
+      await inRun(
+        relay,
         message({ id: 201, createdAt: NOW_SECONDS, content: "open elsewhere", conversation: { id: 13 } }),
       );
-      await relay.relay(
+      await inRun(
+        relay,
         message({ id: 202, createdAt: NOW_SECONDS, content: "over global budget", conversation: { id: 14 } }),
       );
-      const open = forum.contents().filter((content) => content.startsWith("open"));
-      expect(open).toHaveLength(3);
-      expect(open.every((content) => content.endsWith(`<@${TRIAGE}>`))).toBe(true);
+      expect(forum.contents().filter((content) => content === CALL)).toHaveLength(3);
       expect(forum.contents().at(-1)).toContain("more than 3 customer messages this hour");
     },
   );
@@ -382,10 +387,10 @@ describe("Relay", () => {
       forum.failAfter = 1;
       await expect(relay.relay(customer)).rejects.toThrow("Discord HTTP 500");
       customer.answered = !answered;
-      await relay.relay(customer);
+      await inRun(relay, customer);
       const last = forum.contents().at(-1);
       expect(last?.includes("handled automatically")).toBe(answered);
-      expect(last?.includes(`<@${TRIAGE}>`)).toBe(!answered);
+      expect(last === CALL).toBe(!answered);
     }
   });
 
@@ -407,14 +412,41 @@ describe("Relay", () => {
     // Taken over from the Hub: the message was counted, and the bot was to be called.
     store.decisions.set("triage:3:203", "mention");
     store.counters.set(`triage:3:12:${NOW.toISOString().slice(0, 13)}`, 1);
-    await relay.relay(message({ id: 203, content: "third" }));
-    expect(forum.contents().at(-1)).toBe(`third\n-# <@${TRIAGE}>`);
+    await inRun(relay, message({ id: 203, content: "third" }));
+    expect(forum.contents().slice(-2)).toEqual(["third", CALL]);
     // Over the hourly budget then: it stays uncalled.
     store.decisions.set("triage:3:204", "hour");
-    await relay.relay(message({ id: 204, content: "fourth" }));
+    await inRun(relay, message({ id: 204, content: "fourth" }));
     expect(forum.contents().at(-1)).toMatch(
       /^fourth\n-# Triage bot not called: more than 30 customer messages this hour/,
     );
+  });
+
+  it("calls the triage bot last, below the card, which stays put; a failed call is made again, once", async () => {
+    const { relay, forum } = relayWith({ triage, card: ticketCard });
+    const conversation = message().conversation;
+    await relay.relay(message());
+    await relay.sync(3, conversation, "thread-1");
+    forum.failThreadWith = "error";
+    await expect(relay.callTriage(3, conversation)).rejects.toThrow("Discord HTTP 500");
+    await relay.callTriage(3, conversation);
+    await relay.callTriage(3, conversation);
+    const [card, call] = forum.calls.slice(-2).map(([, payload]) => payload);
+    expect(card).toMatchObject({ flags: 1 << 15 });
+    expect(call).toMatchObject({ content: CALL, allowed_mentions: { parse: [] } });
+    expect(forum.contents().filter((content) => content === CALL)).toHaveLength(1);
+    // Nothing follows the call: the card is not posted again below it.
+    const posted = forum.calls.length;
+    await relay.sync(3, conversation, "thread-1");
+    expect(forum.calls).toHaveLength(posted);
+  });
+
+  it("drops the triage bot's call when the conversation is no longer open at the end of the run", async () => {
+    ({ relay, forum } = relayWith({ triage }));
+    await relay.relay(message());
+    await relay.callTriage(3, message({ conversation: resolved }).conversation);
+    await relay.callTriage(3, message().conversation);
+    expect(forum.contents()).not.toContain(CALL);
   });
 
   it("caps very long messages with a link to the full text", async () => {
@@ -480,10 +512,7 @@ describe("Relay", () => {
     const [card, reply, notice] = forum.calls.map(([, payload]) => payload);
     expect(card?.allowed_mentions).toEqual({ parse: [] });
     // The announcement pings the assignee, so the customer message does not as well.
-    expect(reply).toMatchObject({
-      content: `My agent will not connect\n-# <@${TRIAGE}>`,
-      allowed_mentions: { parse: [] },
-    });
+    expect(reply).toMatchObject({ content: "My agent will not connect", allowed_mentions: { parse: [] } });
     expect(notice).toMatchObject({ content: "-# Assigned to <@592>", allowed_mentions: { parse: [], users: ["592"] } });
   });
 
@@ -572,15 +601,15 @@ describe("Relay", () => {
     const replies = forum.calls.slice(1).map(([, payload]) => [payload.content, payload.allowed_mentions]);
     const users = { parse: [], users: ["592"] };
     expect(replies).toEqual([
-      [`My agent will not connect\n-# <@${TRIAGE}>`, { parse: [] }],
+      ["My agent will not connect", { parse: [] }],
       ["-# Assigned to <@592>", users],
-      [`Hello?\n-# <@${TRIAGE}> <@592>`, users],
-      [`Anyone?\n-# <@${TRIAGE}> <@592>`, users],
+      ["Hello?\n-# <@592>", users],
+      ["Anyone?\n-# <@592>", users],
       ["Here", { parse: [] }],
       ["🔒 **Internal note**\nNote", { parse: [] }],
       ["_Snoozed_", { parse: [] }],
-      [`Other agent\n-# <@${TRIAGE}>`, { parse: [] }],
-      [`Nobody\n-# <@${TRIAGE}>`, { parse: [] }],
+      ["Other agent", { parse: [] }],
+      ["Nobody", { parse: [] }],
     ]);
   });
 
@@ -592,11 +621,7 @@ describe("Relay", () => {
     forum.failAfter = 1;
     await expect(relay.relay(message({ id: 102, content: text }))).rejects.toThrow("Discord HTTP 500");
     await relay.relay(message({ id: 102, content: text }));
-    expect(forum.contents().slice(2)).toEqual([
-      "a".repeat(1674),
-      "b".repeat(1674),
-      `${"c".repeat(100)}\n-# <@${TRIAGE}>`,
-    ]);
+    expect(forum.contents().slice(2)).toEqual(["a".repeat(1674), "b".repeat(1674), "c".repeat(100)]);
   });
 
   it("says so, archives, and forgets a post whose conversation was deleted", async () => {
@@ -684,6 +709,7 @@ describe("Relay", () => {
       message({ id: 102, createdAt: hourAgo, content: "old follow-up", conversation: assigned }),
     ];
     for (const old of history) await relay.relay(old);
+    for (const old of history) await relay.callTriage(3, old.conversation);
     await relay.relay(
       message({ id: 103, createdAt: NOW_SECONDS - 60, content: "still there?", conversation: assigned }),
     );
@@ -691,19 +717,17 @@ describe("Relay", () => {
     expect(replies).toEqual([
       ["old question", { parse: [] }],
       ["old follow-up", { parse: [] }],
-      [`still there?\n-# <@${TRIAGE}>`, { parse: [] }],
+      ["still there?", { parse: [] }],
     ]);
     await relay.announceAssignee(3, message({ conversation: assigned }).conversation);
-    expect(forum.contents().at(-1)).toBe("-# Assigned to <@592>");
+    await relay.callTriage(3, message({ conversation: assigned }).conversation);
+    expect(forum.contents().slice(-2)).toEqual(["-# Assigned to <@592>", CALL]);
     expect(forum.members).toEqual([["thread-1", "592"]]);
     // The full five-message allowance remains after history; the sixth live message is over budget.
     for (let id = 104; id <= 108; id += 1)
-      await relay.relay(message({ id, createdAt: NOW_SECONDS, content: `live ${id}`, conversation: assigned }));
-    const live = forum
-      .contents()
-      .filter((content) => content.startsWith("still there?") || content.startsWith("live "));
-    expect(live.filter((content) => content.includes(`<@${TRIAGE}>`))).toHaveLength(5);
-    expect(live.at(-1)).toContain("more than 5 customer messages in this conversation");
+      await inRun(relay, message({ id, createdAt: NOW_SECONDS, content: `live ${id}`, conversation: assigned }));
+    expect(forum.contents().filter((content) => content === CALL)).toHaveLength(5);
+    expect(forum.contents().at(-1)).toContain("more than 5 customer messages in this conversation");
   });
 
   it("pings on the last part of a split message only", async () => {
@@ -716,7 +740,7 @@ describe("Relay", () => {
     const [first, last] = forum.calls.slice(3).map(([, payload]) => payload);
     expect(first).toMatchObject({ content: "a".repeat(1500), allowed_mentions: { parse: [] } });
     expect(last).toMatchObject({
-      content: `${"b".repeat(1500)}\n-# <@${TRIAGE}> <@592>`,
+      content: `${"b".repeat(1500)}\n-# <@592>`,
       allowed_mentions: { parse: [], users: ["592"] },
     });
   });
@@ -724,10 +748,12 @@ describe("Relay", () => {
   it("keeps the notification lines before the truncation note of a very long message", async () => {
     ({ relay, forum } = relayWith({ triage, maxChunks: 2 }));
     const text = `${"x".repeat(1900)}\n`.repeat(4);
-    await relay.relay(message({ content: text }));
+    await relay.relay(message({ content: text, answered: true }));
     const replies = forum.contents().slice(1);
     expect(replies).toHaveLength(3);
-    expect(replies[1]?.endsWith(`\n-# <@${TRIAGE}>`)).toBe(true);
+    expect(replies[1]?.endsWith("\n-# Triage bot not called: handled automatically. Ask it here, if needed.")).toBe(
+      true,
+    );
     expect(replies[2]).toMatch(/^-# Message truncated/);
   });
 

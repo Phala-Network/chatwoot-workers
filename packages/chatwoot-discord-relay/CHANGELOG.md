@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The triage bot is called in a notice of its own at the end of the run, after the customer's messages and what
+  came with them (a routing bot's labels, assignment and status lines), the assignee's announcement and the card,
+  instead of on the customer message. A Discord bot that batches a mentioning bot's next messages with the
+  mention no longer takes those lines for a new request that interrupts its answer. One call per run, however many
+  customer messages; budgets still count each message. The bot reads the post's messages before the call.
+
 ## [0.32.0] - 2026-10-04
 
 ### Changed

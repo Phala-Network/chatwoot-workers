@@ -17,6 +17,7 @@ import { ALICE, BOB, FORUM, json, mockFetch, on, type Recorded, TRIAGE, testSett
 
 const GUILD = "100000000000000044";
 const now = () => Math.floor(Date.now() / 1000);
+const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
 
 interface FakeMessage {
   id: number;
@@ -305,7 +306,7 @@ describe("processConversation", () => {
     ];
     await withStore(async (store) => {
       await sync(store, settings);
-      expect(world.replies()).toEqual([`after\n-# <@${TRIAGE}>`]);
+      expect(world.replies()).toEqual(["after", CALL]);
     });
 
     // An adopted post (linked from the conversation) continues after the watermark too.
@@ -316,7 +317,8 @@ describe("processConversation", () => {
     await withStore(async (store) => {
       await sync(store, settings);
       expect(world.posts().slice(before)).toEqual([
-        { thread: "300000000000000001", body: expect.objectContaining({ content: `after\n-# <@${TRIAGE}>` }) },
+        { thread: "300000000000000001", body: expect.objectContaining({ content: "after" }) },
+        { thread: "300000000000000001", body: expect.objectContaining({ content: CALL }) },
       ]);
     });
   });
@@ -401,13 +403,8 @@ describe("processConversation", () => {
       world.messages.push({ id: 3, content: "just now", message_type: 0, created_at: now() - 5 });
       await sync(store, settings);
       await sync(store, settings);
-      expect(world.replies()).toEqual([
-        "last month",
-        "an answer",
-        `just now\n-# <@${TRIAGE}>`,
-        `-# Assigned to <@${ALICE}>`,
-      ]);
-      expect(world.posts().at(-1)?.body.allowed_mentions).toEqual({ parse: [], users: [ALICE] });
+      expect(world.replies()).toEqual(["last month", "an answer", "just now", `-# Assigned to <@${ALICE}>`, CALL]);
+      expect(world.posts().at(-2)?.body.allowed_mentions).toEqual({ parse: [], users: [ALICE] });
       expect(world.sent("PUT", `/thread-members/${ALICE}`)).toHaveLength(1);
     });
   });
@@ -535,7 +532,7 @@ describe("processConversation", () => {
       // Linked: later syncs do not write it again.
       await sync(store, settings);
       expect(world.sent("POST", "/custom_attributes")).toHaveLength(2);
-      expect(world.replies()).toEqual([`hello\n-# <@${TRIAGE}>`]);
+      expect(world.replies()).toEqual(["hello", CALL]);
     });
   });
 
@@ -565,7 +562,7 @@ describe("processConversation", () => {
         expect(world.sent("POST", "/custom_attributes")).toHaveLength(2);
         await sync(store, settings);
         expect(world.sent("POST", "/custom_attributes")).toHaveLength(2);
-        expect(world.replies()).toEqual([`hello\n-# <@${TRIAGE}>`]);
+        expect(world.replies()).toEqual(["hello", CALL]);
       });
     },
   );
@@ -579,7 +576,7 @@ describe("processConversation", () => {
       await sync(store, accounts([9]));
       expect(world.posts()).toEqual([]);
       await sync(store, accounts([2, 9]));
-      expect(world.replies()).toEqual([`hello\n-# <@${TRIAGE}>`]);
+      expect(world.replies()).toEqual(["hello", CALL]);
     });
   });
 
@@ -623,12 +620,8 @@ describe("processConversation", () => {
       await expect(sync(store, settings)).rejects.toThrow();
       await sync(store, settings);
       // The customer message was posted once; the announcement failed, then its retry succeeded.
-      expect(world.replies()).toEqual([
-        `hello\n-# <@${TRIAGE}>`,
-        `-# Assigned to <@${BOB}>`,
-        `-# Assigned to <@${BOB}>`,
-      ]);
-      expect(world.posts().at(-1)?.body.allowed_mentions).toEqual({ parse: [], users: [BOB] });
+      expect(world.replies()).toEqual(["hello", `-# Assigned to <@${BOB}>`, `-# Assigned to <@${BOB}>`, CALL]);
+      expect(world.posts().at(-2)?.body.allowed_mentions).toEqual({ parse: [], users: [BOB] });
     });
   });
 
@@ -674,9 +667,11 @@ describe("processConversation", () => {
     await withStore(async (store) => {
       await sync(store, testSettings());
       expect(world.replies()).toEqual([
-        `Thanks, that worked!\n-# <@${TRIAGE}>`,
-        `Also this\n-# <@${TRIAGE}>`,
+        "Thanks, that worked!",
+        "Also this",
         "I am out of office until Monday.",
+        // One call after the run's messages, for both of them.
+        CALL,
       ]);
     });
   });
@@ -844,6 +839,7 @@ describe("agent avatars", () => {
         "https://chatwoot.example.com/favicon-512x512.png",
         "https://x.example/b.png",
         "https://x.example/c.png",
+        "https://chatwoot.example.com/favicon-512x512.png", // the triage bot's call
         `${cdn}/avatars/${BOB}/a_bob.png`,
       ]);
       // Cached: one lookup per agent.
@@ -888,10 +884,11 @@ describe("processMessageUpdate", () => {
       expect(world.posts()).toEqual([]);
       await sync(store, settings);
       expect(world.replies()).toEqual([
-        `hello\n-# <@${TRIAGE}>`,
+        "hello",
         "Here is your refund",
         "⚠️ A reply could not be delivered to the customer.",
         "How did we do?\n\n**CSAT:**\n• Rating: 5",
+        CALL,
       ]);
     });
   });
@@ -911,7 +908,7 @@ describe("processMessageUpdate", () => {
     await withStore(async (store) => {
       const settings = testSettings();
       await sync(store, settings);
-      expect(world.replies()).toHaveLength(2); // the message and the response
+      expect(world.replies()).toHaveLength(3); // the message, the response, and the triage bot's call
       for (const message of world.messages) Object.assign(message, { content_attributes: { deleted: true } });
       await processMessageUpdate(context(store, settings), 3, 12, 1);
       await processMessageUpdate(context(store, settings), 3, 12, 2);
@@ -943,7 +940,7 @@ describe("agent bot lifecycle", () => {
         world.conversation.status = status;
         await sync(store, settings);
         expect(world.replies()[0]).toContain("Please help");
-        expect(world.replies()[0]?.includes(`<@${TRIAGE}>`)).toBe(status === "open");
+        expect(world.replies().includes(CALL)).toBe(status === "open");
         expect(world.replies().join("\n")).not.toContain(`<@${ALICE}>`);
         expect(JSON.stringify(world.cards())).toContain("Unassigned");
       });
@@ -961,7 +958,7 @@ describe("agent bot lifecycle", () => {
       world.bot = null;
       await sync(store, settings);
       expect(world.replies().join("\n")).toContain("Waiting greeting");
-      expect(world.replies().join("\n")).not.toContain(`<@${TRIAGE}>`);
+      expect(world.replies()).not.toContain(CALL);
     });
   });
 
@@ -985,7 +982,7 @@ describe("agent bot lifecycle", () => {
     await withStore(async (store) => {
       await sync(store, testSettings());
       const customer = world.replies().find((text) => text.startsWith("A customer request"));
-      expect(customer?.includes(`<@${TRIAGE}>`)).toBe(!answered);
+      expect(world.replies().includes(CALL)).toBe(!answered);
       if (answered) expect(customer).toContain("handled automatically");
     });
   });
@@ -1002,8 +999,9 @@ describe("agent bot lifecycle", () => {
     await withStore(async (store) => {
       await sync(store, testSettings());
       expect(world.replies().find((text) => text.startsWith("First request"))).toContain("handled automatically");
-      expect(world.replies().find((text) => text.startsWith("New request"))).toContain(`<@${TRIAGE}>`);
-      expect(world.replies().find((text) => text.startsWith("Automatic"))).not.toContain(`<@${TRIAGE}>`);
+      // Called once, for the new request; never for the automatic email.
+      expect(world.replies().slice(-2)).toEqual(["Automatic", CALL]);
+      expect(world.replies().filter((text) => text === CALL)).toHaveLength(1);
     });
   });
 
@@ -1047,7 +1045,9 @@ describe("agent bot lifecycle", () => {
       for (let alarm = 0; alarm < 5 && world.posts().length === 0; alarm += 1) {
         await processConversation(context(store, settings, minimumBudget(4)), 3, 12);
       }
-      expect(world.replies().find((text) => text.startsWith("A customer request"))).toContain(`<@${TRIAGE}>`);
+      // Not answered: the triage bot is called once the run gets past the activity after it.
+      expect(world.replies()).toEqual(["A customer request"]);
+      expect(store.conversation(3, 12)?.triagePending).toBe(1);
     });
   });
 
@@ -1069,8 +1069,7 @@ describe("agent bot lifecycle", () => {
         if (change === "arrives") world.messages.push(reply);
         else reply.status = "failed";
         await sync(store, settings);
-        const customer = world.replies().find((text) => text.startsWith("A customer request"));
-        expect(customer?.includes(`<@${TRIAGE}>`)).toBe(change === "fails");
+        expect(world.replies().includes(CALL)).toBe(change === "fails");
       });
     },
   );

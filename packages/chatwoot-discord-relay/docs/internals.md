@@ -122,4 +122,4 @@ Assignment, pending holding and answering replies follow Chatwoot v4.18.0's
 [message paging](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/finders/message_finder.rb).
 A reply that answers a customer message is outgoing, public, not deleted, not failed, not a template (greeting
 or out-of-office) and not an automatic email; bot and human replies both count. Resolved and snoozed tickets get
-no triage mention, and history and automatic customer email stay silent.
+no triage call, and history and automatic customer email stay silent.

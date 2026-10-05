@@ -215,6 +215,7 @@ export async function processConversation(
     if (post?.announcePending) await relay.announceAssignee(accountId, conversation);
     await relay.sync(accountId, conversation, threadId);
     await linkPost(context, accountId, account.forumChannelId, conversation, threadId);
+    await relay.callTriage(accountId, conversation);
   }
   return "done";
 }

@@ -40,13 +40,16 @@ deleted in Discord, it is sent again without the missing tags, and a warning nam
   messages that came with the assignment (after the last one, when the conversation was
   reassigned several times in a row), and is added to the post, so it shows in their thread list
   (if Discord refuses, e.g. they left the server, only a warning is logged). After that, every
-  customer message pings the linked assignee, on the same line as the triage mention. A linked
+  customer message pings the linked assignee, on a line at its end. A linked
   agent @mentioned in a private note is pinged there; other Chatwoot mentions show as `@name`.
   Nothing else pings anyone.
-- Notification lines (the triage mention, pings, budget notes) go on the last Discord message of
-  a split message, so a bot they call sees all of it. Only live messages carry them: messages
-  created more than `reconcile.lookbackSeconds` ago (the history of an older conversation, or a
-  catch-up after downtime) are posted without them.
+- Notification lines (pings, triage budget notes) go on the last Discord message of a split
+  message. The triage bot is called in a notice of its own, the last message of the run: after
+  the run's messages (with a routing bot's labels, assignment and status lines), the assignee's
+  announcement and the card, which stays above it. So the bot reads the whole run, and nothing the
+  run posts reaches it as a follow-up. Only live messages notify: messages created more than
+  `reconcile.lookbackSeconds` ago (the history of an older conversation, or a catch-up after
+  downtime) are posted without notifications.
 
 ## Message content
 
