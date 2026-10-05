@@ -38,9 +38,29 @@ export class Budget {
     this.used += 1;
   }
 
-  readonly fetch: Fetch = (request) => {
-    if (this.used >= this.limit) return Promise.reject(new BudgetExhaustedError());
+  /**
+   * The timeout is cleared once the response body has been read (or there is none): a pending
+   * timer, such as `AbortSignal.timeout`'s, keeps the invocation open until it fires.
+   */
+  readonly fetch: Fetch = async (request) => {
+    if (this.used >= this.limit) throw new BudgetExhaustedError();
     this.used += 1;
-    return this.fetchImpl(new Request(request, { signal: AbortSignal.timeout(this.timeoutMs) }));
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new DOMException("The request timed out", "TimeoutError")),
+      this.timeoutMs,
+    );
+    try {
+      const response = await this.fetchImpl(new Request(request, { signal: controller.signal }));
+      if (!response.body) {
+        clearTimeout(timer);
+        return response;
+      }
+      const body = response.body.pipeThrough(new TransformStream({ flush: () => clearTimeout(timer) }));
+      return new Response(body, response);
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
   };
 }

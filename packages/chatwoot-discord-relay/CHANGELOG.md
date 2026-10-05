@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-10-05
+
 ### Changed
 
 - The card collapses whitespace in the names and labels it shows, using the same `clip` as every other message.
+
+### Fixed
+
+- Clear a request's timeout once its response has been read. The pending `AbortSignal.timeout` timer kept a
+  Durable Object invocation open until it fired, so most alarms were billed and reported at about 60 seconds.
 
 ## [0.40.0] - 2026-10-05
 
@@ -804,7 +811,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.1...HEAD
+[0.40.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.0...chatwoot-discord-relay@0.40.1
 [0.40.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.39.0...chatwoot-discord-relay@0.40.0
 [0.39.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.38.0...chatwoot-discord-relay@0.39.0
 [0.38.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.37.0...chatwoot-discord-relay@0.38.0
