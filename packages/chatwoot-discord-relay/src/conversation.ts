@@ -34,12 +34,11 @@ import { latestMessageId, type ProcessorContext, processConversation, relayFor }
 import { isUnknownCard } from "./relay/relay.ts";
 import { processMessageUpdate } from "./relay/updates.ts";
 import { loadSettings } from "./settings.ts";
-import { type ConversationExport, type Job, Store } from "./store.ts";
+import { type Job, Store } from "./store.ts";
 
 const id = z.number().int().positive();
 const payloadSchema = z.discriminatedUnion("type", [
-  /** `queuedAt`: when an earlier version's Hub queued it, for a command handed over from its queue. */
-  z.object({ type: z.literal("command"), job: commandJobSchema, queuedAt: z.number().optional() }),
+  z.object({ type: z.literal("command"), job: commandJobSchema }),
   z.object({ type: z.literal("sync"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("conversation"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("message-updated"), accountId: id, conversationId: id, messageId: id }),
@@ -71,8 +70,6 @@ const ANSWER_TTL_MS = 14 * 24 * 60 * 60 * 1000;
  */
 const HELD_RECHECK_MS = 5 * 60 * 1000;
 const HELD_KEY = "held";
-/** Set once the conversation's records were taken over from the Hub (see adopt). */
-const ADOPTED_KEY = "adopted";
 /** The post registered with the Hub (see claimThread). */
 const CLAIMED_KEY = "claimed";
 
@@ -137,12 +134,12 @@ export class Conversation extends DurableObject<Env> {
    * ignored. It runs next, ahead of the conversation's background work; other conversations'
    * work never delays it.
    */
-  async enqueueCommand(job: CommandJob, queuedAt?: number): Promise<void> {
+  async enqueueCommand(job: CommandJob): Promise<void> {
     if (!this.store.acceptInteraction(job.interactionId)) {
       log.warn("repeated interaction ignored", { interactionId: job.interactionId });
       return;
     }
-    this.enqueue({ type: "command", job, ...(queuedAt === undefined ? {} : { queuedAt }) });
+    this.enqueue({ type: "command", job });
     await this.schedule();
   }
 
@@ -156,7 +153,6 @@ export class Conversation extends DurableObject<Env> {
     conversationId: number,
     answer: { threadId: string; answerId: string; replyTo: string; draft: string },
   ): Promise<void> {
-    await this.adopt(accountId, conversationId);
     const ticket = this.store.ticketForThread(answer.threadId);
     if (!ticket || this.store.get(answerKey(answer.answerId)) !== undefined) return;
     this.store.set(answerKey(answer.answerId), answer.draft, ANSWER_TTL_MS);
@@ -166,23 +162,7 @@ export class Conversation extends DurableObject<Env> {
 
   /** The draft the triage bot's hook sent with an answer, while it is kept. */
   async answerDraft(accountId: number, conversationId: number, answerId: string): Promise<string | null> {
-    await this.adopt(accountId, conversationId);
     return this.store.get(answerKey(answerId)) ?? null;
-  }
-
-  /**
-   * Takes over `data`, what the Hub of earlier versions recorded about the conversation, unless
-   * it took its records over already (see adopt). The Hub sends them, as this object must not call
-   * back into the Hub that calls it. A post from before cards gets its card while its ticket is not
-   * resolved.
-   */
-  async takeOver(accountId: number, conversationId: number, data: ConversationExport | null): Promise<void> {
-    this.import(accountId, conversationId, data);
-    const row = this.store.conversation(accountId, conversationId);
-    if (row?.threadId && row.cardId === undefined && !row.state?.startsWith('["resolved"')) {
-      this.enqueue({ type: "conversation", accountId, conversationId });
-      await this.schedule();
-    }
   }
 
   /** Cloudflare runs at most one alarm() at a time per Durable Object. */
@@ -221,13 +201,11 @@ export class Conversation extends DurableObject<Env> {
 
   private async run(job: Job, payload: JobPayload, services: ProcessorContext): Promise<"done" | "yield"> {
     try {
-      // A command reads nothing taken over from the Hub, so it never waits for the Hub.
-      if (payload.type !== "command") await this.adopt(payload.accountId, payload.conversationId);
       switch (payload.type) {
         case "command":
           // At most once: a command that sends a message must never run twice.
           this.store.deleteJob(job.key);
-          await this.runCommand(payload.job, payload.queuedAt ?? job.createdAt, services);
+          await this.runCommand(payload.job, job.createdAt, services);
           return "done";
         case "sync":
           await this.syncPost(payload, services);
@@ -316,31 +294,6 @@ export class Conversation extends DurableObject<Env> {
     if (!threadId) return;
     const conversation = await chatwoot.getConversation(accountId, conversationId);
     if (conversation) await relay.sync(accountId, toRelayConversation(conversationId, conversation), threadId);
-  }
-
-  /**
-   * Takes over what the single Hub of earlier versions recorded about this conversation (its post,
-   * cursor, card, the Discord messages posted for each Chatwoot message, the latest draft), once,
-   * before its jobs read its records. A conversation the Hub never saw starts empty. It asks the
-   * Hub, so it runs only in this object's own alarm or for a Worker request, never in a call from
-   * the Hub: Cloudflare refuses a call back into the Hub as recursion.
-   */
-  private async adopt(accountId: number, conversationId: number): Promise<void> {
-    if (this.adopted()) return;
-    this.import(accountId, conversationId, await hub(this.env).exportConversation(accountId, conversationId));
-  }
-
-  private adopted(): boolean {
-    return this.store.get(ADOPTED_KEY) !== undefined;
-  }
-
-  /** Records what the Hub recorded about the conversation, once. */
-  private import(accountId: number, conversationId: number, data: ConversationExport | null): void {
-    this.ctx.storage.transactionSync(() => {
-      if (this.adopted()) return;
-      if (data) this.store.importConversation(data, ANSWER_TTL_MS);
-      this.store.set(ADOPTED_KEY, `${accountId}:${conversationId}`);
-    });
   }
 
   private services(settings: Settings, budget: Budget): ProcessorContext {

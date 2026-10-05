@@ -3,10 +3,6 @@
 // installation-wide background work: the reconciliation sweep and the hourly support queue.
 // Requests from conversations only read or write its storage, so none of them waits for that
 // background work.
-//
-// Earlier versions kept everything here, so its storage is where they left each conversation's
-// records: each conversation's own object takes them over on first use (see exportConversation),
-// and the hand-over job gives every one of them to its object once (see handOverAll).
 
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
@@ -15,7 +11,6 @@ import { CONVERSATIONS_PER_PAGE, chatwootClient } from "../../../shared/chatwoot
 import { parseJson } from "../../../shared/json.ts";
 import { errorFields, log } from "../../../shared/log.ts";
 import { retryDelay } from "../../../shared/store.ts";
-import { type CommandJob, commandJobSchema } from "./commands/job.ts";
 import { relaysInbox, type Settings } from "./config.ts";
 import { conversationStub } from "./conversation.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
@@ -23,7 +18,7 @@ import type { Env } from "./env.ts";
 import { postQueue, type QueueContext } from "./queue.ts";
 import { queueBudget } from "./queue-limits.ts";
 import { loadSettings } from "./settings.ts";
-import { type ConversationExport, type Job, Store } from "./store.ts";
+import { type Job, Store } from "./store.ts";
 
 const HUB_NAME = "global";
 
@@ -35,20 +30,13 @@ const id = z.number().int().positive();
 const payloadSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("sweep"), accountId: id }),
   z.object({ type: z.literal("queue") }),
-  z.object({ type: z.literal("handover") }),
-  // Jobs for a conversation (queued by an earlier version, or by the sweep); each goes to its object.
-  z.object({ type: z.literal("command"), job: commandJobSchema }),
+  // A conversation the sweep could not hand over, given to its object by a job that retries.
   z.object({ type: z.literal("conversation"), accountId: id, conversationId: id }),
-  z.object({ type: z.literal("message-updated"), accountId: id, conversationId: id, messageId: id }),
-  z.object({ type: z.literal("answer"), accountId: id, conversationId: id, answerId: z.string(), replyTo: z.string() }),
 ]);
 type JobPayload = z.infer<typeof payloadSchema>;
 
 const sweepPassSchema = z.object({ cutoff: z.number(), page: z.number().int().positive(), startedAt: z.number() });
 const PASS_TTL_MS = 24 * 60 * 60 * 1000;
-/** Conversations the hand-over job gives to their objects per run, and where it is (see handOverAll). */
-const HANDOVER_PER_RUN = 20;
-const HANDOVER_KEY = "handover";
 /** Stop draining and continue in a new invocation after this long. */
 const RUN_WALL_MS = 5 * 60 * 1000;
 /** How long the support queue may be posted after it is due: Discord's nonce check covers a few minutes. */
@@ -61,6 +49,8 @@ export class Hub extends DurableObject<Env> {
     super(ctx, env);
     this.store = new Store(ctx.storage.sql);
     this.store.migrate();
+    // Relay 0.27 kept every conversation's records here; their objects took them over (0.35).
+    this.store.keepThreadIndexOnly();
   }
 
   ticketForThread(threadId: string): { accountId: number; conversationId: number } | null {
@@ -96,16 +86,10 @@ export class Hub extends DurableObject<Env> {
     );
   }
 
-  /** What an earlier version recorded about a conversation, for its own object to take over. */
-  exportConversation(accountId: number, conversationId: number): ConversationExport | null {
-    return this.store.exportConversation(accountId, conversationId) ?? null;
-  }
-
   /** Queues a reconciliation sweep for every configured account (called by the cron trigger). */
   async requestSweep(): Promise<void> {
     for (const account of (await loadSettings(this.env)).config.accounts)
       this.enqueue({ type: "sweep", accountId: account.id });
-    if (this.store.get(HANDOVER_KEY) !== "done") this.enqueue({ type: "handover" });
     await this.schedule();
   }
 
@@ -163,12 +147,12 @@ export class Hub extends DurableObject<Env> {
           // never posted twice. Every attempt posts the same messages with the same nonces.
           await postQueue(context, job.createdAt, job.createdAt + QUEUE_RETRY_MS);
           break;
-        case "handover":
-          await this.handOverAll(budget);
-          break;
-        default:
+        case "conversation":
           budget.consume();
-          await this.handOver(job, payload);
+          await conversationStub(this.env, payload.accountId, payload.conversationId).enqueueConversation(
+            payload.accountId,
+            payload.conversationId,
+          );
       }
       this.store.completeJob(job);
       return true;
@@ -246,65 +230,6 @@ export class Hub extends DurableObject<Env> {
     }
   }
 
-  /**
-   * Gives every conversation an earlier version relayed to its own object with what was recorded
-   * here about it, which the object takes over (and posts a missing card) unless it did on first
-   * use; it does not call back here, which Cloudflare refuses as recursion. A page per run, continuing where it
-   * stopped; a failure retries the job. Logs when every one was handed over: then the hand-over on
-   * first use and this job can go.
-   */
-  private async handOverAll(budget: Budget): Promise<void> {
-    const at = parseJson(this.store.get(HANDOVER_KEY));
-    const progress = z.object({ after: z.number(), count: z.number() }).safeParse(at);
-    let { after, count } = progress.success ? progress.data : { after: 0, count: 0 };
-    const page = this.store.relayedConversations(after, HANDOVER_PER_RUN);
-    for (const { row, accountId, conversationId } of page) {
-      budget.consume();
-      const data = this.store.exportConversation(accountId, conversationId) ?? null;
-      await conversationStub(this.env, accountId, conversationId).takeOver(accountId, conversationId, data);
-      after = row;
-      count += 1;
-      this.store.set(HANDOVER_KEY, JSON.stringify({ after, count }));
-    }
-    if (page.length < HANDOVER_PER_RUN) {
-      this.store.set(HANDOVER_KEY, "done");
-      log.info("legacy hand-over done", { conversations: count });
-    } else {
-      this.enqueue({ type: "handover" });
-    }
-  }
-
-  /** A conversation's job, queued here by an earlier version or by the sweep, given to its conversation's object. */
-  private async handOver(
-    job: Job,
-    payload: Exclude<JobPayload, { type: "sweep" | "queue" | "handover" }>,
-  ): Promise<void> {
-    if (payload.type === "command") {
-      const command: CommandJob = payload.job;
-      await conversationStub(this.env, command.accountId, command.conversationId).enqueueCommand(
-        command,
-        job.createdAt,
-      );
-      return;
-    }
-    const { accountId, conversationId } = payload;
-    const stub = conversationStub(this.env, accountId, conversationId);
-    if (payload.type === "message-updated") {
-      await stub.enqueueMessageUpdate(accountId, conversationId, payload.messageId);
-      return;
-    }
-    if (payload.type === "answer") {
-      const threadId = this.store.conversation(accountId, conversationId)?.threadId;
-      const draft = this.store.get(`answer:${payload.answerId}`);
-      if (threadId && draft !== undefined) {
-        const { answerId, replyTo } = payload;
-        await stub.triageAnswered(accountId, conversationId, { threadId, answerId, replyTo, draft });
-        return;
-      }
-    }
-    await stub.enqueueConversation(accountId, conversationId);
-  }
-
   private enqueue(payload: JobPayload): void {
     this.store.enqueue(jobKey(payload), payload.type === "sweep" ? 1 : 2, JSON.stringify(payload));
   }
@@ -324,22 +249,13 @@ function jobKey(payload: JobPayload): string {
       return `sweep:${payload.accountId}`;
     case "queue":
       return "queue";
-    case "handover":
-      return HANDOVER_KEY;
-    case "command":
-      return `command:${payload.job.interactionId}`;
-    case "answer":
-      return `answer:${payload.answerId}`;
     case "conversation":
-      return `${payload.type}:${payload.accountId}:${payload.conversationId}`;
-    case "message-updated":
-      return `${payload.type}:${payload.accountId}:${payload.conversationId}:${payload.messageId}`;
+      return `conversation:${payload.accountId}:${payload.conversationId}`;
   }
 }
 
 function requiredBudget(payload: JobPayload, settings: Settings): number {
   if (payload.type === "queue") return queueBudget(settings.config.accounts.length);
-  if (payload.type === "handover") return HANDOVER_PER_RUN;
   // A page of conversations, and one call per conversation in it.
   return payload.type === "sweep" ? 1 + CONVERSATIONS_PER_PAGE : 1;
 }

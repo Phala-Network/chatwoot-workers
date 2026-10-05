@@ -1028,6 +1028,30 @@ describe("agent bot lifecycle", () => {
   );
 });
 
+describe("Hub records", () => {
+  it("keeps only which conversation each post belongs to", async () => {
+    await withStore(async (store) => {
+      store.updateConversation(3, 12, { threadId: "300000000000000001", state: "[]", cardId: "300000000000000009" });
+      store.setCursor(3, 12, 120);
+      store.savePostedPart(3, 12, 120, 0, "300000000000000002");
+      store.updateConversation(3, 13, { threadId: "300000000000000003" });
+      store.setCursor(3, 14, 140); // a post forgotten since
+      store.set("answer:300000000000000004", "draft");
+      store.keepThreadIndexOnly();
+      expect(store.ticketForThread("300000000000000001")).toEqual({ accountId: 3, conversationId: 12 });
+      expect(store.ticketForThread("300000000000000003")).toEqual({ accountId: 3, conversationId: 13 });
+      expect(store.conversation(3, 12)).toMatchObject({
+        threadId: "300000000000000001",
+        cursor: undefined,
+        cardId: undefined,
+      });
+      expect(store.conversation(3, 14)).toBeUndefined();
+      expect(store.postedParts(3, 12, 120)).toEqual([]);
+      expect(store.get("answer:300000000000000004")).toBeUndefined();
+    });
+  });
+});
+
 describe("held conversation job", () => {
   it("stays due when an event comes while it is being checked, instead of waiting for the next recheck", async () => {
     await withStore(async (store) => {

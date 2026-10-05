@@ -130,9 +130,6 @@ export class Notifier {
     const note = (text: string): TriageDecision => ({ note: text });
     if (decision === "answered") return note(handledNote(triage));
     if (decision === "conversation") return note(conversationBudgetNote(triage));
-    // Decided by an earlier version, which counted the hourly budget in its own store.
-    if (decision === "hour") return note(hourlyBudgetNote(triage));
-    if (decision === "mention") return { call: true } as const;
     const hour = decision.slice("hour:".length);
     const event = `${accountId}:${messageId}`;
     const reserve =
