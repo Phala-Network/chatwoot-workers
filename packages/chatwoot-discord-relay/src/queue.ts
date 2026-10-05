@@ -6,8 +6,9 @@
 // Snoozed tickets that match are listed last, marked 💤, and ping no one. Nothing is posted when the
 // queue is empty.
 //
-// A line shows only the ticket's post (or dashboard link), its wait, and its assignee: no customer
-// text. Mentions are allowed from the tickets' fields (linked assignees, the escalation), never
+// The header counts the open tickets waiting for a reply and those with no assignee. A line shows
+// only the ticket's post (or dashboard link), when its customer asked (a Discord timestamp the client
+// keeps relative, "3 hours ago"), and its assignee: no customer text. Mentions are allowed from the tickets' fields (linked assignees, the escalation), never
 // from the message text.
 
 import {
@@ -137,7 +138,7 @@ export async function postQueue(
 
   const wait = (ticket: Ticket) => ticket.waitingSince || Number.POSITIVE_INFINITY;
   tickets.sort((a, b) => Number(a.snoozed || a.pending) - Number(b.snoozed || b.pending) || wait(a) - wait(b));
-  const chunks = tickets.length > 0 ? messages(ctx, tickets, nowSeconds, unread) : [];
+  const chunks = tickets.length > 0 ? messages(ctx, tickets, unread) : [];
   // A nonce per hour and part: Discord creates no second message for a retried request it took.
   const nonce = (index: number) => `queue-${Math.floor(nowSeconds / 3600)}-${index}`;
   const late = () => {
@@ -165,10 +166,13 @@ export async function postQueue(
   });
 }
 
-function messages(ctx: QueueContext, tickets: Ticket[], nowSeconds: number, unread: boolean): Chunk[] {
+function messages(ctx: QueueContext, tickets: Ticket[], unread: boolean): Chunk[] {
   const { escalationRoleId: roleId, escalationUserId: userId } = ctx.settings.config.queue ?? {};
   const escalate = tickets.some((ticket) => ticket.escalate);
-  let header = `📋 Support queue <t:${Math.floor(nowSeconds)}:t>`;
+  const open = tickets.filter((ticket) => !ticket.snoozed && !ticket.pending);
+  const waiting = open.filter((ticket) => ticket.waitingSince).length;
+  const unassigned = open.filter((ticket) => !ticket.assignee).length;
+  let header = `📋 **Support queue** · ${waiting} waiting · ${unassigned} unassigned`;
   if (escalate) {
     const mention = roleId ? `<@&${roleId}>` : `<@${userId}>`;
     header += `\n${mention} 🔔 tickets have waited with no assignee: please \`/assign\` one.`;
@@ -177,7 +181,7 @@ function messages(ctx: QueueContext, tickets: Ticket[], nowSeconds: number, unre
   const chunks: Chunk[] = [{ content: header, users, role: escalate && roleId !== undefined }];
   let shown = 0;
   for (const ticket of tickets) {
-    const text = line(ctx, ticket, nowSeconds);
+    const text = line(ctx, ticket);
     const last = chunks.at(-1);
     if (!last) break;
     const limit = chunks.length === QUEUE_MESSAGES ? CONTENT_LIMIT - NOTE_ROOM : CONTENT_LIMIT;
@@ -203,12 +207,12 @@ function messages(ctx: QueueContext, tickets: Ticket[], nowSeconds: number, unre
   return chunks;
 }
 
-function line(ctx: QueueContext, ticket: Ticket, nowSeconds: number): string {
+function line(ctx: QueueContext, ticket: Ticket): string {
   const { settings, store } = ctx;
   const threadId = store.conversation(ticket.accountId, ticket.conversationId)?.threadId;
   const url = conversationUrl(settings.frontendUrl, ticket.accountId, ticket.conversationId);
   const post = threadId ? `<#${threadId}>` : `[${ticket.accountName} #${ticket.conversationId}](<${url}>)`;
-  const waiting = ticket.waitingSince ? `waiting ${duration(nowSeconds - ticket.waitingSince)}` : "replied";
+  const waiting = ticket.waitingSince ? `⏳ <t:${ticket.waitingSince}:R>` : "replied";
   const linked = ticket.snoozed || ticket.pending ? undefined : settings.linkedAgent(ticket.assignee?.id);
   const owner = linked
     ? `<@${linked.discordUserId}>`
@@ -216,14 +220,7 @@ function line(ctx: QueueContext, ticket: Ticket, nowSeconds: number): string {
       ? defused(clip(ticket.assignee.name, NAME_LIMIT))
       : "❔ Unassigned";
   const mark = ticket.escalate ? "🔔 " : ticket.snoozed ? "💤 " : ticket.pending ? "🤖 " : "";
-  return `${mark}${post} | ${waiting} | ${owner}`;
-}
-
-function duration(seconds: number): string {
-  const minutes = Math.max(Math.floor(seconds / 60), 0);
-  if (minutes < 60) return `${minutes} min`;
-  if (minutes < 48 * 60) return `${Math.floor(minutes / 60)} h`;
-  return `${Math.floor(minutes / (24 * 60))} d`;
+  return `${mark}${post} · ${waiting} · ${owner}`;
 }
 
 async function post(

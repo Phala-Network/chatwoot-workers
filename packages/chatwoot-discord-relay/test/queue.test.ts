@@ -104,12 +104,12 @@ describe("support queue", () => {
 
     const [message] = posted(requests);
     expect(message.content.split("\n")).toEqual([
-      `📋 Support queue <t:${NOW}:t>`,
+      "📋 **Support queue** · 3 waiting · 2 unassigned",
       `<@&${ROLE}> 🔔 tickets have waited with no assignee: please \`/assign\` one.`,
-      "🔔 <#100000000000000777> | waiting 3 h | ❔ Unassigned",
-      `[Acme #5](<https://chatwoot.example.com/app/accounts/3/conversations/5>) | waiting 1 h | <​@&${ROLE}> Mallory`,
-      `[Acme #2](<https://chatwoot.example.com/app/accounts/3/conversations/2>) | waiting 15 min | <@${ALICE}>`,
-      "[Acme #4](<https://chatwoot.example.com/app/accounts/3/conversations/4>) | replied | ❔ Unassigned",
+      `🔔 <#100000000000000777> · ⏳ <t:${NOW - 3 * HOUR}:R> · ❔ Unassigned`,
+      `[Acme #5](<https://chatwoot.example.com/app/accounts/3/conversations/5>) · ⏳ <t:${NOW - HOUR}:R> · <​@&${ROLE}> Mallory`,
+      `[Acme #2](<https://chatwoot.example.com/app/accounts/3/conversations/2>) · ⏳ <t:${NOW - HOUR / 4}:R> · <@${ALICE}>`,
+      "[Acme #4](<https://chatwoot.example.com/app/accounts/3/conversations/4>) · replied · ❔ Unassigned",
     ]);
     expect(message.allowed_mentions).toEqual({ parse: [], users: [ALICE], roles: [ROLE] });
   });
@@ -136,9 +136,9 @@ describe("support queue", () => {
 
     const [message] = posted(requests);
     expect(message.content.split("\n").slice(2)).toEqual([
-      "🔔 [Acme #3](<https://chatwoot.example.com/app/accounts/3/conversations/3>) | waiting 1 h | ❔ Unassigned",
-      "💤 [Acme #1](<https://chatwoot.example.com/app/accounts/3/conversations/1>) | waiting 30 h | ❔ Unassigned",
-      "💤 [Acme #2](<https://chatwoot.example.com/app/accounts/3/conversations/2>) | waiting 2 h | Alice",
+      `🔔 [Acme #3](<https://chatwoot.example.com/app/accounts/3/conversations/3>) · ⏳ <t:${NOW - HOUR}:R> · ❔ Unassigned`,
+      `💤 [Acme #1](<https://chatwoot.example.com/app/accounts/3/conversations/1>) · ⏳ <t:${NOW - 30 * HOUR}:R> · ❔ Unassigned`,
+      `💤 [Acme #2](<https://chatwoot.example.com/app/accounts/3/conversations/2>) · ⏳ <t:${NOW - 2 * HOUR}:R> · Alice`,
     ]);
     expect(message.allowed_mentions).toEqual({ parse: [], users: [], roles: [ROLE] });
   });
