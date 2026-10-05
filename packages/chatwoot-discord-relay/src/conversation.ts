@@ -34,7 +34,7 @@ import { latestMessageId, type ProcessorContext, processConversation, relayFor }
 import { isUnknownCard } from "./relay/relay.ts";
 import { processMessageUpdate } from "./relay/updates.ts";
 import { loadSettings } from "./settings.ts";
-import { type Job, Store } from "./store.ts";
+import { type ConversationExport, type Job, Store } from "./store.ts";
 
 const id = z.number().int().positive();
 const payloadSchema = z.discriminatedUnion("type", [
@@ -94,7 +94,6 @@ export class Conversation extends DurableObject<Env> {
    * message is held, since the bot's turn may have ended.
    */
   async enqueueConversation(accountId: number, conversationId: number, delayMs = 0): Promise<void> {
-    await this.adopt(accountId, conversationId);
     const delay = this.store.get(HELD_KEY) === undefined ? delayMs : 0;
     this.enqueue({ type: "conversation", accountId, conversationId }, Date.now() + delay);
     await this.schedule();
@@ -105,7 +104,6 @@ export class Conversation extends DurableObject<Env> {
    * answered by the customer (the response is posted), or with a changed outgoing delivery status.
    */
   async enqueueMessageUpdate(accountId: number, conversationId: number, messageId: number): Promise<void> {
-    await this.adopt(accountId, conversationId);
     this.enqueue({ type: "message-updated", accountId, conversationId, messageId });
     await this.schedule();
   }
@@ -115,7 +113,6 @@ export class Conversation extends DurableObject<Env> {
    * messages, or tags, status, or card that differ). Covers webhooks that were never delivered.
    */
   async reconcile(accountId: number, conversationId: number, listed: ChatwootConversation): Promise<void> {
-    await this.adopt(accountId, conversationId);
     const settings = await loadSettings(this.env);
     const row = this.store.conversation(accountId, conversationId);
     const latest = latestMessageId(listed);
@@ -141,7 +138,6 @@ export class Conversation extends DurableObject<Env> {
    * work never delays it.
    */
   async enqueueCommand(job: CommandJob, queuedAt?: number): Promise<void> {
-    await this.adopt(job.accountId, job.conversationId);
     if (!this.store.acceptInteraction(job.interactionId)) {
       log.warn("repeated interaction ignored", { interactionId: job.interactionId });
       return;
@@ -175,11 +171,13 @@ export class Conversation extends DurableObject<Env> {
   }
 
   /**
-   * Takes over what the Hub of earlier versions recorded about the conversation, if it has not yet
-   * (see adopt). A post from before cards gets its card while its ticket is not resolved.
+   * Takes over `data`, what the Hub of earlier versions recorded about the conversation, unless
+   * it took its records over already (see adopt). The Hub sends them, as this object must not call
+   * back into the Hub that calls it. A post from before cards gets its card while its ticket is not
+   * resolved.
    */
-  async takeOver(accountId: number, conversationId: number): Promise<void> {
-    await this.adopt(accountId, conversationId);
+  async takeOver(accountId: number, conversationId: number, data: ConversationExport | null): Promise<void> {
+    this.import(accountId, conversationId, data);
     const row = this.store.conversation(accountId, conversationId);
     if (row?.threadId && row.cardId === undefined && !row.state?.startsWith('["resolved"')) {
       this.enqueue({ type: "conversation", accountId, conversationId });
@@ -223,6 +221,8 @@ export class Conversation extends DurableObject<Env> {
 
   private async run(job: Job, payload: JobPayload, services: ProcessorContext): Promise<"done" | "yield"> {
     try {
+      // A command reads nothing taken over from the Hub, so it never waits for the Hub.
+      if (payload.type !== "command") await this.adopt(payload.accountId, payload.conversationId);
       switch (payload.type) {
         case "command":
           // At most once: a command that sends a message must never run twice.
@@ -321,13 +321,23 @@ export class Conversation extends DurableObject<Env> {
   /**
    * Takes over what the single Hub of earlier versions recorded about this conversation (its post,
    * cursor, card, the Discord messages posted for each Chatwoot message, the latest draft), once,
-   * before anything else touches it. A conversation the Hub never saw starts empty.
+   * before its jobs read its records. A conversation the Hub never saw starts empty. It asks the
+   * Hub, so it runs only in this object's own alarm or for a Worker request, never in a call from
+   * the Hub: Cloudflare refuses a call back into the Hub as recursion.
    */
   private async adopt(accountId: number, conversationId: number): Promise<void> {
-    if (this.store.get(ADOPTED_KEY) !== undefined) return;
-    const data = await hub(this.env).exportConversation(accountId, conversationId);
+    if (this.adopted()) return;
+    this.import(accountId, conversationId, await hub(this.env).exportConversation(accountId, conversationId));
+  }
+
+  private adopted(): boolean {
+    return this.store.get(ADOPTED_KEY) !== undefined;
+  }
+
+  /** Records what the Hub recorded about the conversation, once. */
+  private import(accountId: number, conversationId: number, data: ConversationExport | null): void {
     this.ctx.storage.transactionSync(() => {
-      if (this.store.get(ADOPTED_KEY) !== undefined) return;
+      if (this.adopted()) return;
       if (data) this.store.importConversation(data, ANSWER_TTL_MS);
       this.store.set(ADOPTED_KEY, `${accountId}:${conversationId}`);
     });

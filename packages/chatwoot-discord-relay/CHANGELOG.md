@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-10-05
+
+### Fixed
+
+- A conversation's object took over the Hub's records by calling the Hub, also inside a call from the Hub (the
+  sweep, the hand-over), which Cloudflare refuses as recursion ("Subrequest depth limit exceeded"): the hand-over
+  of 0.35.0 failed, and a conversation the sweep found before any webhook could not be relayed. The Hub now sends
+  the records with the hand-over, and an object takes them over only in its own alarm (or for a Worker request).
+  Commands never wait for the Hub.
+
 ## [0.35.0] - 2026-10-05
 
 ### Changed
@@ -738,7 +748,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.1...HEAD
+[0.35.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.0...chatwoot-discord-relay@0.35.1
 [0.35.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.34.0...chatwoot-discord-relay@0.35.0
 [0.34.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.33.0...chatwoot-discord-relay@0.34.0
 [0.33.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.32.0...chatwoot-discord-relay@0.33.0

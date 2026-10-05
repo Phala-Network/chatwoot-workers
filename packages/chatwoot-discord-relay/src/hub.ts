@@ -247,8 +247,9 @@ export class Hub extends DurableObject<Env> {
   }
 
   /**
-   * Gives every conversation an earlier version relayed to its own object, which takes over what
-   * was recorded here about it (and posts a missing card), a page per run, continuing where it
+   * Gives every conversation an earlier version relayed to its own object with what was recorded
+   * here about it, which the object takes over (and posts a missing card) unless it did on first
+   * use; it does not call back here, which Cloudflare refuses as recursion. A page per run, continuing where it
    * stopped; a failure retries the job. Logs when every one was handed over: then the hand-over on
    * first use and this job can go.
    */
@@ -259,7 +260,8 @@ export class Hub extends DurableObject<Env> {
     const page = this.store.relayedConversations(after, HANDOVER_PER_RUN);
     for (const { row, accountId, conversationId } of page) {
       budget.consume();
-      await conversationStub(this.env, accountId, conversationId).takeOver(accountId, conversationId);
+      const data = this.store.exportConversation(accountId, conversationId) ?? null;
+      await conversationStub(this.env, accountId, conversationId).takeOver(accountId, conversationId, data);
       after = row;
       count += 1;
       this.store.set(HANDOVER_KEY, JSON.stringify({ after, count }));
