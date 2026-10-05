@@ -47,7 +47,10 @@ may point to another deployment of that API, for example a proxy or gateway.
 - Jev chooses owner, topic, kind and whether there is a request. A confident kind takes precedence; otherwise a
   confident greeting/no-request stays pending while fewer than three texts exist. Empty or identifier-only input,
   three greetings, an unclear owner with an actual request, or a public human reply hands off. Blocked contacts
-  and person-assigned conversations are untouched during routing; disconnect handoff also clears blocked bot leftovers.
+  and conversations of another bot are untouched during routing; disconnect handoff also clears blocked bot leftovers.
+  A person on a pending conversation is its owner from before it was resolved (a customer message reopens a resolved
+  ticket as pending and keeps its assignee; assigning a person opens a pending ticket): its turn is routed, its owner
+  kept, and a greeting goes to them at once instead of waiting for a request.
   Bot and user assignees are distinguished by `assignee_type`.
 - Before **each** action, re-read the inbox link, pending status, assignee, turn boundary, inputs and public human
   replies. A changed input defers the job to decide again. Apply topic/kind labels, then the kind's canned reply,
@@ -81,8 +84,8 @@ may point to another deployment of that API, for example a proxy or gateway.
   Chatwoot makes three delivery attempts for 429/500 responses. Irrelevant valid bot events are acknowledged.
   There is no router account-webhook endpoint.
 
-After handoff, later customer messages belong to people. Resolved tickets reopen pending in an active bot inbox
-and are decided on their **new turn's** messages. Snoozed tickets reopen open and go to people. A canned reply
+After handoff, later customer messages belong to people. Resolved tickets reopen pending in an active bot inbox,
+with their assignee, and are decided on their **new turn's** messages. Snoozed tickets reopen open and go to people. A canned reply
 following a customer message counts as answering it in the relay, even if that message was outside Jev's window.
 
 The API contracts were checked against Chatwoot v4.18.0:

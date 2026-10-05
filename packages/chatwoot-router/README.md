@@ -17,7 +17,9 @@ is each routed account's native agent bot, connected to the inboxes it should ro
    may point to another deployment) for the owner, topic, kind, and whether there is a request yet.
 3. It applies the topic and kind labels, sends the kind's canned reply if it has one (at most once per
    conversation), and ends the turn: the kind's resolved or snoozed status, the confident owner, or a handoff to
-   people (`status=open`). A greeting with no request yet stays pending until the customer says more.
+   people (`status=open`). A greeting with no request yet stays pending until the customer says more. A resolved
+   ticket that a customer message reopens keeps its owner: its kind may still end it (a thanks is resolved),
+   otherwise it goes back to the owner.
 4. Anything uncertain hands off to people: an unclear owner, a failed or unconfirmed reply, a human replying,
    three failed attempts. Disconnecting an inbox's bot hands its pending tickets to people.
 5. A sweep every five minutes lists pending and open conversations, so a missed webhook is caught up and a bot
