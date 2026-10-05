@@ -15,14 +15,16 @@ export const PAGE_REQUESTS = 1;
 /**
  * One message besides its parts: the linked sender's Discord avatar; for a new post, the inbox
  * name, the forum's tags, the bot's application id, the webhook's lookup, creation and lookup again, the
- * ticket header, and the header again with the tags looked up again; a failed attempt into a post
+ * ticket header, the header again with the tags looked up again, and the customer context (its
+ * lookup and its message); a failed attempt into a post
  * deleted in Discord; the truncation note; the notice when the message is skipped; and what its
  * state adds (a customer's response or a delivery failure, see relay/updates.ts).
  */
-const MESSAGE_REQUESTS = 14;
+const MESSAGE_REQUESTS = 16;
 
 /**
- * After the messages: the notice that pings a new assignee and adding them to the post; linking
+ * After the messages: the notice that pings a new assignee and adding them to the post; the
+ * customer context looked up again and its message edited (or posted when it was deleted); linking
  * the post from its conversation (the forum's guild and the attribute update); and bringing the
  * post's tags, title, archived flag, and card up to date (the forum's tags, the update, the update
  * again with the tags looked up again, editing the card or looking for the post's cards, deleting
@@ -30,7 +32,7 @@ const MESSAGE_REQUESTS = 14;
  * it is not called. Deleting more
  * than one card, when an answer to posting one was lost, may yield and continue in the next run.
  */
-export const FINISH_REQUESTS = 2 + 2 + 7 + 1;
+export const FINISH_REQUESTS = 2 + 2 + 2 + 7 + 1;
 
 /** What one message may need, with room left to finish the run afterwards. */
 export function requestsPerMessage(maxChunks: number): number {

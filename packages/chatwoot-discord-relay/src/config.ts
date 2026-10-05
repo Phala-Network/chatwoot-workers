@@ -111,6 +111,11 @@ export const configSchema = z
       })
       .optional(),
     /**
+     * A service that tells what the deployment knows about a ticket's customer, shown at the top of the post (see
+     * src/relay/context.ts); it needs CUSTOMER_CONTEXT_SECRET. Unset: off.
+     */
+    customerContext: z.strictObject({ url: z.url({ protocol: /^https$/ }) }).optional(),
+    /**
      * The hourly support queue (see src/queue.ts). Unset: off. The cron trigger must fire at minute 0.
      */
     queue: z
@@ -172,6 +177,8 @@ export const secretsSchema = z.object({
   CHATWOOT_AGENT_TOKENS: jsonRecord.default({}),
   /** Shared with the triage bot's hook, which signs POST /triage/answered. Unset: the route is off. */
   TRIAGE_HOOK_SECRET: z.string().min(32).optional(),
+  /** Signs the requests to `customerContext.url`. */
+  CUSTOMER_CONTEXT_SECRET: z.string().min(32).optional(),
 });
 
 type Secrets = z.infer<typeof secretsSchema>;
@@ -199,6 +206,9 @@ export function parseSettings(rawConfig: unknown, rawSecrets: object): Settings 
 }
 
 export function buildSettings(config: Config, secrets: Secrets): Settings {
+  if (config.customerContext && !secrets.CUSTOMER_CONTEXT_SECRET) {
+    throw new ConfigError("Invalid secrets: CUSTOMER_CONTEXT_SECRET: customerContext needs it");
+  }
   for (const account of config.accounts) {
     if (!secrets.CHATWOOT_WEBHOOK_SECRETS[String(account.id)]) {
       throw new ConfigError(`Invalid secrets: CHATWOOT_WEBHOOK_SECRETS: account ${account.id} needs a webhook secret`);

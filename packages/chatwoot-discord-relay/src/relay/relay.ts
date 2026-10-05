@@ -4,9 +4,11 @@
 // conversation.
 
 import { MessageFlags, type RESTPostAPIWebhookWithTokenJSONBody } from "discord-api-types/v10";
+import { BudgetExhaustedError } from "../../../../shared/budget.ts";
 import { errorFields, log } from "../../../../shared/log.ts";
 import type { LinkedAgent, RelayConversation, RelayMessage } from "../../../../shared/types.ts";
 import type { CardTicket } from "../commands/components.ts";
+import type { ContextLookup } from "./context.ts";
 import {
   type Avatars,
   body,
@@ -106,6 +108,13 @@ export interface PostFields {
   /** The triage bot's latest answer with a draft reported in the post, and the message it answers. */
   answerId: string;
   answerSourceId: string;
+  /**
+   * The post's customer context message (see customerContext), when its context was last looked up (ms), and the
+   * customer's latest message then.
+   */
+  contextMessageId: string;
+  contextCheckedAt: number;
+  contextFor: string;
   /** The first Discord message of the customer's latest message (or response) in the post. */
   customerMessageId: string;
 }
@@ -162,7 +171,14 @@ export interface RelayOptions {
    * Unset: always true.
    */
   claimThread?: ((accountId: number, conversationId: number, threadId: string) => Promise<boolean>) | undefined;
+  /** What the deployment knows about a ticket's customer (see context.ts); unset: no customer context. */
+  customerContext?: ContextLookup | undefined;
 }
+
+/** How often a post's customer context is looked up again after the customer writes. */
+const CONTEXT_REFRESH_MS = 15 * 60 * 1000;
+/** Discord's limit for a message's content. */
+const MESSAGE_LIMIT = 2000;
 
 /** A stored state that matches no conversation: the post's archived flag must be applied again. */
 const OUT_OF_DATE = "";
@@ -232,6 +248,8 @@ export class Relay {
     }
     if (!threadId) {
       threadId = await this.createPost(message);
+      // Right under the header, before the customer's first message.
+      await this.customerContext(accountId, conversation, threadId);
       await this.post(message, parts, threadId);
     }
     this.unarchived(accountId, conversation);
@@ -258,6 +276,46 @@ export class Relay {
       return;
     }
     store.updateConversation(accountId, conversationId, { answerId, answerSourceId: source, cardCovered: 1 });
+  }
+
+  /**
+   * The post's customer context message (RelayOptions.customerContext): looked up when the post is created, and
+   * again once the customer wrote since, at most every CONTEXT_REFRESH_MS; posted once, then edited in place. A
+   * lookup that fails or finds nothing leaves the message as it is; a later run tries again.
+   */
+  async customerContext(accountId: number, conversation: RelayConversation, threadId: string): Promise<void> {
+    const lookup = this.options.customerContext;
+    if (!lookup) return;
+    const { store, forum } = this.options;
+    const recorded = store.conversation(accountId, conversation.id);
+    const latest = recorded?.customerMessageId ?? "";
+    const now = (this.options.now?.() ?? new Date()).getTime();
+    if (
+      recorded?.contextMessageId &&
+      (recorded.contextFor === latest || now - (recorded.contextCheckedAt ?? 0) < CONTEXT_REFRESH_MS)
+    ) {
+      return;
+    }
+    store.updateConversation(accountId, conversation.id, { contextCheckedAt: now, contextFor: latest });
+    let markdown: string | undefined;
+    try {
+      markdown = await lookup(conversation.contact);
+    } catch (error) {
+      if (error instanceof BudgetExhaustedError) throw error;
+      log.warn("customer context unavailable", { accountId, conversationId: conversation.id, ...errorFields(error) });
+      return;
+    }
+    if (!markdown) return;
+    const message: WebhookMessage = {
+      content: Array.from(markdown).slice(0, MESSAGE_LIMIT).join(""),
+      username: SYSTEM_USERNAME,
+      avatar_url: this.options.avatars.chatwoot,
+      allowed_mentions: { parse: [] },
+    };
+    const id = recorded?.contextMessageId;
+    if (id && (await forum.editMessage(this.forumOf(accountId), threadId, id, message))) return;
+    const posted = await this.postMessage(accountId, conversation, message);
+    if (posted !== undefined) store.updateConversation(accountId, conversation.id, { contextMessageId: posted });
   }
 
   /**

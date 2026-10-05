@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-05
+
+### Added
+
+- Customer context (`customerContext.url`, `CUSTOMER_CONTEXT_SECRET`): a post shows what the deployment's own service
+  knows about the ticket's customer, right under its header. The relay asks the service, with a signed request, when
+  the post is created and again once the customer wrote since, at most every 15 minutes, and edits the message in
+  place; a failed lookup does not hold up the post. A run's worst case grows by 4 requests (2 for a new post's
+  message, 2 to refresh): `relay.subrequestBudget` must be at least `relay.maxChunks` + 35.
+
 ## [0.40.2] - 2026-10-05
 
 ### Fixed
@@ -818,7 +828,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.2...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.0...HEAD
+[0.41.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.2...chatwoot-discord-relay@0.41.0
 [0.40.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.1...chatwoot-discord-relay@0.40.2
 [0.40.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.0...chatwoot-discord-relay@0.40.1
 [0.40.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.39.0...chatwoot-discord-relay@0.40.0
