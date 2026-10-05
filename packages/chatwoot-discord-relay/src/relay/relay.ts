@@ -333,8 +333,13 @@ export class Relay {
     const { store, forum } = this.options;
     const state = this.stateOf(conversation);
     const recorded = store.conversation(accountId, conversation.id);
+    // The triage bot's draft is offered while it answers the customer's latest message and the customer still
+    // waits for a reply: once one is sent (Chatwoot clears `waiting_since`), the draft has been used.
     const source = recorded?.answerSourceId;
-    const draft = source && answersLatest(source, recorded?.customerMessageId) ? recorded?.answerId : undefined;
+    const draft =
+      source && conversation.waitingSince && answersLatest(source, recorded?.customerMessageId)
+        ? recorded?.answerId
+        : undefined;
     const card = this.options.card?.(this.cardTicket(accountId, conversation), draft);
     const cardDue =
       card !== undefined && (!recorded?.cardId || isUnknownCard(recorded.cardId) || recorded.cardCovered === 1);

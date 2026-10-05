@@ -109,7 +109,11 @@ class World {
   }
 
   private conversationJson(conversation: FakeConversation) {
+    // Like Chatwoot: the customer waits from their message until a public reply, or until the ticket is resolved.
+    const lastPublic = conversation.messages.filter((m) => m.message_type <= 1 && !m.private).at(-1);
+    const waiting = conversation.status !== "resolved" && lastPublic?.message_type === 0;
     return {
+      waiting_since: waiting ? 1_790_000_000 : 0,
       id: conversation.id,
       status: conversation.status,
       inbox_id: 2,
