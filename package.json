@@ -20,7 +20,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@cloudflare/vitest-pool-workers": "0.22.0",
-    "@types/node": "^24.19.0",
+    "@types/node": "^24.19.1",
     "cf": "1.0.0-beta.9",
     "esbuild": "0.28.2",
     "jsonc-parser": "^3.3.1",
