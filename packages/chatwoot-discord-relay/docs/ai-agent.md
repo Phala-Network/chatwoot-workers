@@ -39,7 +39,7 @@ with several such customer messages calls the agent once. The agent reads the po
 messages to see what to answer (an agent that only reads the message that mentions it sees just
 the call). When a public reply (a person's or a bot's) followed the customer's latest message,
 or the conversation is no longer open by the end of the run, the agent is not called, and a note
-says so: `-# Triage bot not called: handled automatically. Ask it here, if needed.`
+says so: `-# Triage bot not called: the customer was answered, or the ticket is not open. Ask it here if needed.`
 
 The mention is a literal token in the message content; Discord sends no notification for it
 (the relay's `allowed_mentions` leaves it out), so nobody is pinged by it. Only customer

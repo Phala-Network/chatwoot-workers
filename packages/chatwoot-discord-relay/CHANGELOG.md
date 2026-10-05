@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A message keeps room only for the line it can get (the assignee's ping) when it is split, no longer for the
+  triage notes earlier versions put on messages.
+- The note when the triage bot is not called because the customer was answered or the ticket is not open says so,
+  instead of "handled automatically", which a person's reply is not.
+
 ## [0.37.0] - 2026-10-05
 
 ### Changed
