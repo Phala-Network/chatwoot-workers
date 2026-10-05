@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-05
+
+### Added
+
+- The card shows how long the customer has waited for a reply (`⏳ Asked 5 minutes ago`, from Chatwoot's
+  `waiting_since`), as a Discord timestamp the client keeps current; nothing while nobody owes them a reply.
+
 ### Changed
 
 - A message keeps room only for the line it can get (the assignee's ping) when it is split, no longer for the
@@ -776,7 +783,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.37.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.38.0...HEAD
+[0.38.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.37.0...chatwoot-discord-relay@0.38.0
 [0.37.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.36.0...chatwoot-discord-relay@0.37.0
 [0.36.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.1...chatwoot-discord-relay@0.36.0
 [0.35.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.35.0...chatwoot-discord-relay@0.35.1

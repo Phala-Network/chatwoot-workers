@@ -45,6 +45,8 @@ export interface RelayConversation {
   };
   /** Person only; agent bots are represented as unassigned. */
   assignee?: RelayAssignee | null;
+  /** Unix seconds since the customer has waited for a reply (Chatwoot's `waiting_since`); null when they do not. */
+  waitingSince?: number | null;
   assigneeType?: string | null;
   customAttributes: Record<string, unknown>;
 }

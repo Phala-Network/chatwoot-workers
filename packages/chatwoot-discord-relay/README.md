@@ -74,7 +74,7 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
 - **One post per conversation.** Its title is `[<Account> #<id>] <customer> — <subject or first message>`. It
   opens with a ticket header (channel, inbox, customer contact, "Open in Chatwoot"), every message follows under
   its sender's name (customers, agents, 🔒 private notes, activity lines), and it ends with the ticket's card:
-  status, assignee and labels, with buttons. Forum tags follow the conversation (account, status, assignee,
+  status, assignee and labels, how long the customer has waited for a reply, with buttons. Forum tags follow the conversation (account, status, assignee,
   topic, priority, labels); resolved posts are archived. [How conversations are relayed](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/relay.md) has the details.
 - **Work from the post.** The card's buttons and [commands](#commands-and-buttons) run in Chatwoot with the
   agent's own access token, so Chatwoot's permissions and audit trail apply. Talking in a post never reaches the
