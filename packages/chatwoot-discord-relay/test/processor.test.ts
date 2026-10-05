@@ -208,10 +208,13 @@ function claimIn(store: Store) {
   };
 }
 
-/** Runs the conversation job until it is done, each run with a fresh budget, like its object does. */
+/**
+ * Runs the conversation job until it is done, each run with a fresh budget, like its object does. A run keeps a
+ * message's worst case in reserve, so a backlog of 300 messages takes about 50 runs.
+ */
 async function sync(store: Store, settings: Settings, limit?: number): Promise<ProcessOutcome[]> {
   const outcomes: ProcessOutcome[] = [];
-  for (let run = 0; run < 30; run += 1) {
+  for (let run = 0; run < 60; run += 1) {
     const outcome = await processConversation(context(store, settings, limit), 3, 12);
     outcomes.push(outcome);
     if (outcome === "done") return outcomes;
@@ -1027,6 +1030,7 @@ describe("agent bot lifecycle", () => {
         expect(world.replies().at(-1)).toBe(change === "arrives" ? HANDLED : CALL);
       });
     },
+    30_000, // 300 messages, over about 50 runs
   );
 });
 
