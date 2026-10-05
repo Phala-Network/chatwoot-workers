@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The triage bot's call is decided when a run ends, for the customer's latest message, from what the run relayed:
+  when a public reply followed it, or the conversation is no longer open, a note says it was handled automatically
+  instead. The look-ahead scan for an answering reply (across pages and invocations, invalidated by message updates)
+  is gone. A run calls the bot at most once, and `triage.perConversationPerHour` and `triage.perHour` count calls.
+  The notes why the bot was not called are a notice after the run's messages, no longer a line on the message.
+
+### Upgrade
+
+- The smallest accepted `relay.subrequestBudget` is one request smaller.
+
 ## [0.33.0] - 2026-10-05
 
 ### Changed

@@ -106,10 +106,6 @@ export class Conversation extends DurableObject<Env> {
    */
   async enqueueMessageUpdate(accountId: number, conversationId: number, messageId: number): Promise<void> {
     await this.adopt(accountId, conversationId);
-    // Do this on receipt: the conversation job runs before the message-update job.
-    if (this.store.invalidateAnswerScans(accountId, conversationId)) {
-      this.enqueue({ type: "conversation", accountId, conversationId });
-    }
     this.enqueue({ type: "message-updated", accountId, conversationId, messageId });
     await this.schedule();
   }

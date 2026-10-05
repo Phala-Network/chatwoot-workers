@@ -61,8 +61,8 @@ export interface RelayMessage {
   emailSubject?: string | null;
   /** An automatic email reply (out of office, for example): relayed without notifications. */
   autoReply?: boolean;
-  /** A qualifying public reply follows this message in Chatwoot. */
-  answered?: boolean;
+  /** A public reply that answers the customer (see isAnsweringReply). */
+  answers?: boolean;
   attachments: RelayAttachment[];
   /** A bot's options to pick, cards, or articles, with a link each when they have one. */
   items?: RelayItem[];

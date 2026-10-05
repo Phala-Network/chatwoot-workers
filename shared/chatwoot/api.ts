@@ -536,6 +536,7 @@ export function toRelayMessage(
     content: messageContent(message),
     emailSubject: message.content_attributes?.email?.subject ?? null,
     autoReply: message.content_attributes?.email?.auto_reply === true,
+    answers: isAnsweringReply(message),
     attachments: (message.attachments ?? []).flatMap(toRelayAttachment),
     items: ITEM_CONTENT_TYPES.has(message.content_type ?? "") ? toRelayItems(message.content_attributes?.items) : [],
     sender: message.sender

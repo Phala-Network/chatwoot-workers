@@ -18,6 +18,7 @@ import { ALICE, BOB, FORUM, json, mockFetch, on, type Recorded, TRIAGE, testSett
 const GUILD = "100000000000000044";
 const now = () => Math.floor(Date.now() / 1000);
 const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
+const HANDLED = "-# Triage bot not called: handled automatically. Ask it here, if needed.";
 
 interface FakeMessage {
   id: number;
@@ -748,12 +749,14 @@ describe("processConversation", () => {
     await withStore(async (store) => {
       await sync(store, testSettings());
       expect(world.replies()).toEqual([
-        `${sticker}\n-# Triage bot not called: handled automatically. Ask it here, if needed.`,
-        `📇 Ana Lima: +15550100\n-# Triage bot not called: handled automatically. Ask it here, if needed.`,
-        `📎 Story mention https://lookaside.example.com/story\n📎 Reel https://lookaside.example.com/reel\n📎 Shared post https://example.com/p\n-# Triage bot not called: handled automatically. Ask it here, if needed.`,
+        sticker,
+        "📇 Ana Lima: +15550100",
+        "📎 Story mention https://lookaside.example.com/story\n📎 Reel https://lookaside.example.com/reel\n📎 Shared post https://example.com/p",
         "Pick a topic\n• Billing\n• Technical\n• other\n• five",
         "• [Pro plan](<https://example.com/pro.png>) — $10 a month · [Buy](<https://example.com/buy>)",
         "• [Reset your password](<https://help.example.com/reset>) — Steps",
+        // The bot's replies answered the customer.
+        HANDLED,
       ]);
     });
   });
@@ -981,13 +984,11 @@ describe("agent bot lifecycle", () => {
     ];
     await withStore(async (store) => {
       await sync(store, testSettings());
-      const customer = world.replies().find((text) => text.startsWith("A customer request"));
-      expect(world.replies().includes(CALL)).toBe(!answered);
-      if (answered) expect(customer).toContain("handled automatically");
+      expect(world.replies().at(-1)).toBe(answered ? HANDLED : CALL);
     });
   });
 
-  it("finds an answer beyond the first forward page, then keeps a later real request despite automatic email", async () => {
+  it("decides for the run's latest customer message, across pages; automatic email calls nothing", async () => {
     const world = new World();
     world.messages = [
       { id: 1, content: "First request", message_type: 0 },
@@ -998,61 +999,13 @@ describe("agent bot lifecycle", () => {
     ];
     await withStore(async (store) => {
       await sync(store, testSettings());
-      expect(world.replies().find((text) => text.startsWith("First request"))).toContain("handled automatically");
-      // Called once, for the new request; never for the automatic email.
       expect(world.replies().slice(-2)).toEqual(["Automatic", CALL]);
-      expect(world.replies().filter((text) => text === CALL)).toHaveLength(1);
-    });
-  });
-
-  it("does not restore a stale answer cursor when an update arrives during a page read", async () => {
-    const world = new World();
-    const reply = { id: 150, content: "The answer", message_type: 1, status: "failed" };
-    world.messages = [
-      { id: 1, content: "A customer request", message_type: 0 },
-      ...Array.from({ length: 300 }, (_, index) =>
-        index + 2 === reply.id ? reply : { id: index + 2, content: "Activity", message_type: 2 },
-      ),
-    ];
-    await withStore(async (store) => {
-      const settings = testSettings();
-      const services = context(store, settings);
-      const read = services.chatwoot.listMessages;
-      vi.spyOn(services.chatwoot, "listMessages").mockImplementation(async (...args) => {
-        const page = await read(...args);
-        if (args[2]?.after === 201) {
-          reply.status = "sent";
-          store.invalidateAnswerScans(3, 12); // The Hub invalidates on webhook receipt, during this read.
-        }
-        return page;
-      });
-      expect(await processConversation(services, 3, 12)).toBe("yield");
-      expect(world.posts()).toEqual([]);
-
-      await sync(store, settings);
-      expect(world.replies().find((text) => text.startsWith("A customer request"))).toContain("handled automatically");
-    });
-  });
-
-  it("completes a long answer scan across minimum-budget alarms without restarting each time", async () => {
-    const world = new World();
-    world.messages = [
-      { id: 1, content: "A customer request", message_type: 0 },
-      ...Array.from({ length: 6200 }, (_, index) => ({ id: index + 2, content: "Activity", message_type: 2 })),
-    ];
-    await withStore(async (store) => {
-      const settings = testSettings();
-      for (let alarm = 0; alarm < 5 && world.posts().length === 0; alarm += 1) {
-        await processConversation(context(store, settings, minimumBudget(4)), 3, 12);
-      }
-      // Not answered: the triage bot is called once the run gets past the activity after it.
-      expect(world.replies()).toEqual(["A customer request"]);
-      expect(store.conversation(3, 12)?.triagePending).toBe(1);
+      expect(world.replies().filter((text) => text === CALL || text === HANDLED)).toEqual([CALL]);
     });
   });
 
   it.each(["arrives", "fails"])(
-    "rechecks an answer that %s across alarms before the first triage decision",
+    "decides when the run ends, after invocations that yielded, with a reply that %s meanwhile",
     async (change) => {
       const world = new World();
       const reply = { id: 302, content: "The answer", message_type: 1, status: "sent" };
@@ -1064,12 +1017,12 @@ describe("agent bot lifecycle", () => {
       await withStore(async (store) => {
         const settings = testSettings();
         expect(await processConversation(context(store, settings, minimumBudget(4)), 3, 12)).toBe("yield");
-        expect(world.posts()).toEqual([]);
+        expect(world.replies().some((text) => text === CALL || text === HANDLED)).toBe(false);
 
         if (change === "arrives") world.messages.push(reply);
         else reply.status = "failed";
         await sync(store, settings);
-        expect(world.replies().includes(CALL)).toBe(change === "fails");
+        expect(world.replies().at(-1)).toBe(change === "arrives" ? HANDLED : CALL);
       });
     },
   );

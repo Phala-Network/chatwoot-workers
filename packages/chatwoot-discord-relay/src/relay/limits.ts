@@ -4,10 +4,10 @@
 
 /**
  * Before the first message: the conversation, a check that the post linked from it exists
- * (recovery), the latest messages (an adopted post's starting point), and the first page.
+ * (recovery), the latest messages (an adopted post's starting point), the first page, and the
+ * conversation read again for a customer message.
  */
-// Include a fresh customer-message state read and its first answering-reply page.
-const SETUP_REQUESTS = 6;
+const SETUP_REQUESTS = 5;
 
 /** Reading the next page of messages. */
 export const PAGE_REQUESTS = 1;
@@ -26,7 +26,8 @@ const MESSAGE_REQUESTS = 14;
  * the post from its conversation (the forum's guild and the attribute update); and bringing the
  * post's tags, title, archived flag, and card up to date (the forum's tags, the update, the update
  * again with the tags looked up again, editing the card or looking for the post's cards, deleting
- * the previous one, posting it again, and archiving); and the triage bot's call. Deleting more
+ * the previous one, posting it again, and archiving); and the triage bot's call or the note why
+ * it is not called. Deleting more
  * than one card, when an answer to posting one was lost, may yield and continue in the next run.
  */
 export const FINISH_REQUESTS = 2 + 2 + 7 + 1;

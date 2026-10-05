@@ -84,8 +84,13 @@ export interface PostFields {
   announcedAssignee: string;
   /** 1 while a live message is posted and the assignee is not announced after it yet (see announceAssignee). */
   announcePending: number;
-  /** 1 while a customer message calling the triage bot is posted and the bot is not called yet (see callTriage). */
-  triagePending: number;
+  /**
+   * The customer's latest live message, while the triage bot's call (or the note why it is not
+   * called) is owed for it (see triage); 0 when none is.
+   */
+  triageMessageId: number;
+  /** 1 once a public reply followed that message. */
+  triageAnswered: number;
   /**
    * The subject the post's title ends with and the title last applied; unset for a post whose
    * title was not recorded (adopted, or created before titles were recorded).
@@ -200,8 +205,8 @@ export class Relay {
    * Posts a message into its conversation's post, creating the post if needed. Each Discord
    * message is recorded as soon as it is sent, so a retry resumes after the last one. Templates,
    * deleted and empty messages, and messages from a blocked contact are not relayed. A message
-   * that notifies leaves an announcement pending (see `announceAssignee`), and one that calls the
-   * triage bot leaves its call pending (see `callTriage`).
+   * that notifies leaves an announcement pending (see `announceAssignee`), a live customer message
+   * leaves the triage bot's call owed (see `triage`), and a public reply after it answers it.
    */
   async relay(message: RelayMessage): Promise<void> {
     if (!RELAYED_TYPES.has(message.messageType) || message.deleted) return;
@@ -231,7 +236,11 @@ export class Relay {
     }
     this.unarchived(accountId, conversation);
     if (this.notifier.notifies(message)) store.updateConversation(accountId, conversation.id, { announcePending: 1 });
-    if (notification.callsTriage) store.updateConversation(accountId, conversation.id, { triagePending: 1 });
+    if (this.notifier.callsTriage(message)) {
+      store.updateConversation(accountId, conversation.id, { triageMessageId: message.id, triageAnswered: 0 });
+    } else if (message.answers && store.conversation(accountId, conversation.id)?.triageMessageId) {
+      store.updateConversation(accountId, conversation.id, { triageAnswered: 1 });
+    }
   }
 
   /**
@@ -276,24 +285,41 @@ export class Relay {
   }
 
   /**
-   * Last in a run, while a call is pending: calls the triage bot in a notice of its own, after
+   * After a run's messages, while one is owed: decides the triage bot's call for the customer's
+   * latest message. When the bot is not called (a reply answered the message, the ticket is no
+   * longer open, or a budget is used up), a note says why, and nothing is owed any more. True when
+   * the call is owed: `callTriage` makes it last in the run.
+   */
+  async triage(accountId: number, conversation: RelayConversation): Promise<boolean> {
+    const { store } = this.options;
+    const recorded = store.conversation(accountId, conversation.id);
+    const messageId = recorded?.triageMessageId;
+    if (!messageId) return false;
+    const decision = await this.notifier.triage(accountId, conversation, messageId, recorded?.triageAnswered === 1);
+    if (decision && "call" in decision) return true;
+    if (decision) await this.notify(accountId, conversation, decision.note);
+    store.updateConversation(accountId, conversation.id, { triageMessageId: 0, triageAnswered: 0 });
+    return false;
+  }
+
+  /**
+   * Last in a run, when `triage` owes the call: calls the triage bot in a notice of its own, after
    * everything the run posted (the routing kind's labels, assignment and status lines, the
    * announcement, the card). The bot reads the post's recent messages when called, so it sees the
    * customer's messages and how they were routed, and nothing the run posts reaches it as a
    * follow-up. The card stays where it is, so it is not posted again right after the call. A
-   * conversation that is no longer open is not the team's to answer: the call is dropped. A
-   * failed call stays pending, so the job's retry makes it.
+   * failed call stays owed, so the job's retry makes it.
    */
   async callTriage(accountId: number, conversation: RelayConversation): Promise<void> {
     const { triage, store } = this.options;
-    if (!store.conversation(accountId, conversation.id)?.triagePending) return;
-    if (triage && conversation.status === "open") {
+    if (!store.conversation(accountId, conversation.id)?.triageMessageId) return;
+    if (triage) {
       const posted = await this.postMessage(accountId, conversation, this.notice(triageLine(triage)), {
         coversCard: false,
       });
       if (posted === undefined) return;
     }
-    store.updateConversation(accountId, conversation.id, { triagePending: 0 });
+    store.updateConversation(accountId, conversation.id, { triageMessageId: 0, triageAnswered: 0 });
   }
 
   /**
