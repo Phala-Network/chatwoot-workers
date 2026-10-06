@@ -70,6 +70,11 @@ export const configSchema = z
                * reopens either.
                */
               status: z.enum(["resolved", "snoozed"]).optional(),
+              /**
+               * Whether the ticket gets the kind's label (the default). False for a kind that is not a kind of
+               * ticket, such as a thank-you that is only resolved.
+               */
+              label: z.boolean().default(true),
             }),
           ),
         )

@@ -229,7 +229,7 @@ export async function routeConversation(
   const labels = [
     ...new Set([
       ...current.conversation.labels,
-      ...[topic, kind ? decision.kind : null].filter((label) => label !== null),
+      ...[topic, kind?.label ? decision.kind : null].filter((label) => label !== null),
     ]),
   ];
   if (labels.length !== current.conversation.labels.length) await bot.setLabels(accountId, conversationId, labels);

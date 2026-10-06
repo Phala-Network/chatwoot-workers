@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
+
+### Added
+
+- `routing.kinds.<id>.<name>.label` (default `true`): `false` handles the kind without giving the ticket its label,
+  for a kind that is not a kind of ticket, such as a thank-you that is only resolved.
+
 ## [0.5.2] - 2026-10-05
+
+### Fixed
+
+- Clear a request's timeout once its response has been read. The pending `AbortSignal.timeout` timer kept a
+  Durable Object invocation open until it fired, so most alarms were billed and reported at about 60 seconds.
 
 ## [0.5.1] - 2026-10-05
 
@@ -16,11 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Route on a customer's message as it arrives. Chatwoot's message webhook describes a contact without a `type`
   (`Contact#webhook_data`; users and bots have one), and the router required `type: "contact"`, so it ignored
   every customer message and a new ticket waited for the five-minute sweep.
-
-### Fixed
-
-- Clear a request's timeout once its response has been read. The pending `AbortSignal.timeout` timer kept a
-  Durable Object invocation open until it fired, so most alarms were billed and reported at about 60 seconds.
 
 ## [0.5.0] - 2026-10-05
 
@@ -127,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.2...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.6.0...HEAD
+[0.6.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.2...chatwoot-router@0.6.0
 [0.5.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.1...chatwoot-router@0.5.2
 [0.5.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.0...chatwoot-router@0.5.1
 [0.5.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.4.0...chatwoot-router@0.5.0

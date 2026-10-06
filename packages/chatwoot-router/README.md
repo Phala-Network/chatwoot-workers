@@ -126,6 +126,7 @@ no unpublished shared package needs installing.
 | `routing.kinds.<id>.<name>.covers` | 1–1000 characters | required | What the kind is: Jev's criterion for recognizing it. |
 | `routing.kinds.<id>.<name>.cannedResponse` | short code | unset | The account's Chatwoot canned response sent to the customer once, by the account's agent bot (`CHATWOOT_AGENT_BOT_TOKENS`); handoff if it is missing. |
 | `routing.kinds.<id>.<name>.status` | `resolved` or `snoozed` | unset | Set instead of routing the ticket (`snoozed`: until the customer's next message), after the reply of a `cannedResponse`; a new customer message reopens it. |
+| `routing.kinds.<id>.<name>.label` | boolean | `true` | Whether the ticket gets the kind's label; `false` for a kind that is not a kind of ticket, such as a thank-you that is only resolved. |
 
 ### Secrets
 
