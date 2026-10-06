@@ -56,7 +56,7 @@ with fictional data.*
 - [Deploy](#deploy)
 - [Commands and buttons](#commands-and-buttons)
 - [Configuration reference](#configuration-reference)
-- [Routing](#routing), [Triage bot hook](#triage-bot-hook), [Customer context](#customer-context), [Support queue](#support-queue)
+- [Routing](#routing), [Triage bot hook](#triage-bot-hook), [Support queue](#support-queue)
 - [Security model](#security-model)
 - [Limits and the Workers Free plan](#limits-and-the-workers-free-plan)
 - [Development](#development)
@@ -337,10 +337,9 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `relay.linkAttribute` | string | `discord_thread` | Conversation custom attribute that receives the post URL (`""` disables it). |
 | `relay.startAfterMessageId` | integer ≥ 0 | `0` | Messages with an id at or below this are never relayed (cutover watermark, see [Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md)). |
 | `relay.maxAttempts` | integer ≥ 1 | `5` | Attempts before a message Discord refuses as invalid is skipped with a notice. |
-| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 35 | `45` | Outbound requests per alarm invocation (Free plan limit: 50). The minimum fits a run's setup and one message's worst case (`src/relay/limits.ts`). |
+| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 31 | `45` | Outbound requests per alarm invocation (Free plan limit: 50). The minimum fits a run's setup and one message's worst case (`src/relay/limits.ts`). |
 | `avatars.chatwoot` | https URL | `<publicUrl>/favicon-512x512.png` | Avatar of activity lines, cards, notices, agent bots without an https Chatwoot avatar, and agents with neither a linked Discord user nor an https Chatwoot avatar. |
 | `avatars.contact` | https URL | Gravatar "mystery person" | Avatar of customers without an https avatar in Chatwoot. |
-| `customerContext.url` | https URL | unset | A service of yours that tells what you know about a ticket's customer, shown under the post's header ([customer context](#customer-context)). Needs `CUSTOMER_CONTEXT_SECRET`. Unset: off. |
 | `queue` | object | unset | The hourly [support queue](#support-queue). Unset: off. Requires `relay.subrequestBudget` ≥ 6 × accounts + 4. |
 | `queue.channelId` | Discord id (17–20 digits) | required | Channel or forum post the queue is posted in. The bot needs *Send Messages* there (*Send Messages in Threads* for a post). |
 | `queue.escalationRoleId` | Discord id (17–20 digits) | unset | Role pinged for tickets unassigned too long. To ping a role that is not mentionable, the bot needs *Mention @everyone, @here, and All Roles* in the channel. Unset: no escalation. |
@@ -365,7 +364,6 @@ Worker secrets, never in the configuration, also validated at startup:
 | `CHATWOOT_WEBHOOK_SECRETS` | JSON object, `{"<account id>":"<secret>"}` | Required for every configured account; missing entries fail configuration validation. |
 | `CHATWOOT_AGENT_TOKENS` | JSON object, `{"<Discord user id>":"<token>"}`; optional, default `{}` | Each linked agent's own Chatwoot access token; commands act with it. |
 | `TRIAGE_HOOK_SECRET` | 32+ characters; optional | Signs the triage bot's hook ([triage bot hook](#triage-bot-hook)). Unset: the route is off. |
-| `CUSTOMER_CONTEXT_SECRET` | 32+ characters; required with `customerContext` | Signs the requests to `customerContext.url`. |
 
 ## Routing
 
@@ -398,16 +396,6 @@ latest (an answer to an earlier one, or older than one already reported, changes
 after they were sent, so the card follows them (right after the answer unless another message
 came in between). The hook is a convenience: if a call is lost, the card offers no draft, and
 **Reply with this** still works. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md) for the agent's side.
-
-## Customer context
-
-With `customerContext`, a post shows what your own systems know about the ticket's customer (their accounts, plan,
-balance, open issues), right under the header: the relay asks `customerContext.url` with
-`POST {"email", "name", "phone"}` of the ticket's contact, signed like a Chatwoot webhook (`x-timestamp`,
-`x-signature: sha256=` and the hex HMAC-SHA256 of `<timestamp>.<body>` with `CUSTOMER_CONTEXT_SECRET`), and posts the
-`markdown` of its JSON answer as one message (up to 2,000 characters, no pings). It asks when the post is created, and
-again once the customer wrote since, at most every 15 minutes, editing the message in place. A failed or empty answer
-leaves the message as it is; a later run asks again. A triage bot reads it with the rest of the post.
 
 ## Support queue
 
@@ -456,7 +444,7 @@ See [SECURITY.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/SE
 | Free plan limit | How this service stays within it |
 |---|---|
 | 10 ms CPU per Worker request | The Worker verifies a signature, parses JSON, and makes one Durable Object call. Bodies over 2 MB are rejected; a very large webhook that fails is relayed by the next sweep. |
-| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 30 requests remain (its parts, 16 for everything else a message may need, and 14 to finish the run), so the budget must be at least `relay.maxChunks` + 35 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
+| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 26 requests remain (its parts, 14 for everything else a message may need, and 12 to finish the run), so the budget must be at least `relay.maxChunks` + 31 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
 | 128 MB memory | Attachments are capped at 25 MB each / 50 MB per command. |
 | 100,000 Worker requests/day | See the estimate below. |
 | Durable Objects (SQLite): 100,000 requests/day, 100,000 rows written/day | See the estimate below. |

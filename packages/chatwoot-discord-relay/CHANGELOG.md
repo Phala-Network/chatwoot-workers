@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-05
+
+### Removed
+
+- `customerContext` and `CUSTOMER_CONTEXT_SECRET` (0.41): remove them from your configuration and secrets before
+  upgrading, since configuration validation refuses unknown keys. Context about a ticket's customer is better kept
+  in Chatwoot, where the team and every integration see it, than in the relay alone: your own service can post it as
+  a private note in the conversation, triggered by a Chatwoot webhook, and the relay copies the note into the post
+  like any other. Do not keep it in contact attributes: website visitors can write those through the widget. Posts
+  keep the context messages they have; the relay no longer updates them. The minimum `relay.subrequestBudget` is
+  `relay.maxChunks` + 31 again.
+
 ## [0.41.2] - 2026-10-05
 
 ### Fixed
@@ -844,7 +856,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.2...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.42.0...HEAD
+[0.42.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.2...chatwoot-discord-relay@0.42.0
 [0.41.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.1...chatwoot-discord-relay@0.41.2
 [0.41.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.0...chatwoot-discord-relay@0.41.1
 [0.41.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.2...chatwoot-discord-relay@0.41.0

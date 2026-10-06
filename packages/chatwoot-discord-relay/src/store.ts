@@ -99,10 +99,13 @@ const MIGRATIONS: string[] = [
    UPDATE conversations SET triage_message_id = cursor WHERE triage_pending = 1;
    ALTER TABLE conversations DROP COLUMN triage_pending;
    DELETE FROM cache WHERE key LIKE 'answer-scan:%';`,
-  // The post's customer context message, when it was last looked up, and for which customer message.
+  // 0.41's customer context message, its last lookup, and the customer message it was for; dropped in 0.42.
   `ALTER TABLE conversations ADD COLUMN context_message_id TEXT;
    ALTER TABLE conversations ADD COLUMN context_checked_at INTEGER;
    ALTER TABLE conversations ADD COLUMN context_for TEXT;`,
+  `ALTER TABLE conversations DROP COLUMN context_message_id;
+   ALTER TABLE conversations DROP COLUMN context_checked_at;
+   ALTER TABLE conversations DROP COLUMN context_for;`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;
@@ -133,9 +136,6 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
   ["answerId", "answer_id"],
   ["answerSourceId", "answer_source_id"],
   ["customerMessageId", "customer_message_id"],
-  ["contextMessageId", "context_message_id"],
-  ["contextCheckedAt", "context_checked_at"],
-  ["contextFor", "context_for"],
 ];
 
 export type { Job } from "../../../shared/store.ts";
@@ -173,9 +173,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
         answer_id: string | null;
         answer_source_id: string | null;
         customer_message_id: string | null;
-        context_message_id: string | null;
-        context_checked_at: number | null;
-        context_for: string | null;
       }>(
         `SELECT ${COLUMNS.map(([, column]) => column).join(", ")} FROM conversations
          WHERE account_id = ? AND conversation_id = ?`,
@@ -200,9 +197,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
       answerId: row.answer_id ?? undefined,
       answerSourceId: row.answer_source_id ?? undefined,
       customerMessageId: row.customer_message_id ?? undefined,
-      contextMessageId: row.context_message_id ?? undefined,
-      contextCheckedAt: row.context_checked_at ?? undefined,
-      contextFor: row.context_for ?? undefined,
     };
   }
 
@@ -264,7 +258,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
        ON CONFLICT (account_id, conversation_id) DO UPDATE SET thread_id = excluded.thread_id, state = NULL,
          announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
          card_id = excluded.card_id, card_covered = NULL, answer_id = NULL, answer_source_id = NULL,
-         customer_message_id = NULL, context_message_id = NULL, context_checked_at = NULL, context_for = NULL`,
+         customer_message_id = NULL`,
       accountId,
       conversationId,
       threadId,
@@ -368,8 +362,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
     this.sql.exec(
       `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL,
          title_subject = NULL, title = NULL, title_message_id = NULL, card_id = NULL, card_covered = NULL, answer_id = NULL,
-         answer_source_id = NULL, customer_message_id = NULL, context_message_id = NULL, context_checked_at = NULL,
-         context_for = NULL
+         answer_source_id = NULL, customer_message_id = NULL
        WHERE account_id = ? AND conversation_id = ?`,
       accountId,
       conversationId,

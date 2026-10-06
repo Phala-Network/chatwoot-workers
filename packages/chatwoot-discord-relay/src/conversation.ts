@@ -30,7 +30,6 @@ import { DiscordForum } from "./discord/forum.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
 import type { Env } from "./env.ts";
 import { hub } from "./hub.ts";
-import { CONTEXT_TIMEOUT_MS, contextLookup } from "./relay/context.ts";
 import { latestMessageId, type ProcessorContext, processConversation, relayFor } from "./relay/processor.ts";
 import { isUnknownCard } from "./relay/relay.ts";
 import { processMessageUpdate } from "./relay/updates.ts";
@@ -299,13 +298,8 @@ export class Conversation extends DurableObject<Env> {
     const forum = new DiscordForum(rest, this.store);
     const claimThread = (accountId: number, conversationId: number, threadId: string) =>
       this.claimThread(accountId, conversationId, threadId);
-    const context = settings.config.customerContext;
     const relay = relayFor(settings, forum, this.store, {
       claimThread,
-      customerContext:
-        context && settings.secrets.CUSTOMER_CONTEXT_SECRET
-          ? contextLookup(context.url, settings.secrets.CUSTOMER_CONTEXT_SECRET, budget.within(CONTEXT_TIMEOUT_MS))
-          : undefined,
       reserveTriage: (hour, event) => hub(this.env).reserveTriage(hour, event, settings.config.triage.perHour),
     });
     return { settings, store: this.store, relay, forum, chatwoot, budget, rest, claimThread };
