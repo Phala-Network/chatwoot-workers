@@ -25,4 +25,14 @@ describe("request budget", () => {
     expect(response.status).toBe(204);
     expect(cleared).toHaveBeenCalledTimes(1);
   });
+
+  it("gives up on a request after the timeout it is given", async () => {
+    const hanging = (request: Request) =>
+      new Promise<Response>((_, reject) =>
+        request.signal.addEventListener("abort", () => reject(request.signal.reason)),
+      );
+    const budget = new Budget(1, hanging);
+    await expect(budget.within(10)(new Request("https://example.com/"))).rejects.toThrow("timed out");
+    expect(budget.remaining).toBe(0);
+  });
 });

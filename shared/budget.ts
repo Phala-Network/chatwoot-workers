@@ -38,29 +38,35 @@ export class Budget {
     this.used += 1;
   }
 
+  /** Counts the request and gives up after REQUEST_TIMEOUT_MS (see `within`). */
+  readonly fetch: Fetch = (request) => this.within(this.timeoutMs)(request);
+
   /**
-   * The timeout is cleared once the response body has been read (or there is none): a pending
-   * timer, such as `AbortSignal.timeout`'s, keeps the invocation open until it fires.
+   * Counts each request and gives up after `timeoutMs`, for a request on a path that must not wait long. The timeout
+   * is cleared once the response body has been read (or there is none): a pending timer, such as
+   * `AbortSignal.timeout`'s, keeps the invocation open until it fires.
    */
-  readonly fetch: Fetch = async (request) => {
-    if (this.used >= this.limit) throw new BudgetExhaustedError();
-    this.used += 1;
-    const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(new DOMException("The request timed out", "TimeoutError")),
-      this.timeoutMs,
-    );
-    try {
-      const response = await this.fetchImpl(new Request(request, { signal: controller.signal }));
-      if (!response.body) {
+  within(timeoutMs: number): Fetch {
+    return async (request) => {
+      if (this.used >= this.limit) throw new BudgetExhaustedError();
+      this.used += 1;
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(new DOMException("The request timed out", "TimeoutError")),
+        timeoutMs,
+      );
+      try {
+        const response = await this.fetchImpl(new Request(request, { signal: controller.signal }));
+        if (!response.body) {
+          clearTimeout(timer);
+          return response;
+        }
+        const body = response.body.pipeThrough(new TransformStream({ flush: () => clearTimeout(timer) }));
+        return new Response(body, response);
+      } catch (error) {
         clearTimeout(timer);
-        return response;
+        throw error;
       }
-      const body = response.body.pipeThrough(new TransformStream({ flush: () => clearTimeout(timer) }));
-      return new Response(body, response);
-    } catch (error) {
-      clearTimeout(timer);
-      throw error;
-    }
-  };
+    };
+  }
 }

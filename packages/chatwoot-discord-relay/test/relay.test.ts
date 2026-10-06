@@ -1054,14 +1054,16 @@ describe("the customer context", () => {
     expect(looked).toHaveLength(2); // nothing new from the customer
   });
 
-  it("does not hold up the post when the lookup fails, and is posted by a later run", async () => {
+  it("does not hold up the post when the lookup fails, and is posted by a run a minute later", async () => {
     let fail = true;
-    const { relay, forum, later } = withContext(async () => {
+    const { relay, forum, looked, later } = withContext(async () => {
       if (fail) throw new Error("Customer context failed with HTTP 503");
       return "**Customer** · RedPill: no account";
     });
     await relay.relay(message());
     expect(forum.calls.map(([, payload]) => payload.username)).toEqual(["Chatwoot", "Jane Doe"]);
+    await relay.customerContext(3, message().conversation, "thread-1");
+    expect(looked).toHaveLength(1); // not again in the same run
 
     fail = false;
     later(1);

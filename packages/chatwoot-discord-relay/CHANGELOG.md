@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.2] - 2026-10-05
+
+### Fixed
+
+- The customer context lookup gives up after 5 s, not the 60 s every request may take: a new post's first message
+  waits for it, so a hanging context service held up every new post by a minute.
+- A lookup that failed is tried again at most every minute while the post has no context message: it was tried again
+  at once in the same run, and on every run while the service was down.
+
 ## [0.41.1] - 2026-10-06
 
 ### Changed
@@ -835,7 +844,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.1...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.2...HEAD
+[0.41.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.1...chatwoot-discord-relay@0.41.2
 [0.41.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.0...chatwoot-discord-relay@0.41.1
 [0.41.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.2...chatwoot-discord-relay@0.41.0
 [0.40.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.1...chatwoot-discord-relay@0.40.2
