@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-05
+
+### Added
+
+- `accounts[].cardNoteBotId`: the card shows the latest private note of that agent bot of the account (up to 2,000
+  characters), under its overview. Use it for a service's own record about the ticket, such as what it knows of the
+  customer: the note stays in the post, and the card keeps it in view. Messages carry their sender's Chatwoot id.
+
 ## [0.42.0] - 2026-10-05
 
 ### Removed
@@ -856,7 +864,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.42.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.0...HEAD
+[0.43.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.42.0...chatwoot-discord-relay@0.43.0
 [0.42.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.2...chatwoot-discord-relay@0.42.0
 [0.41.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.1...chatwoot-discord-relay@0.41.2
 [0.41.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.0...chatwoot-discord-relay@0.41.1

@@ -841,6 +841,30 @@ describe("the card", () => {
     expect(forum.ids.at(-1)).not.toBe(cardId);
   });
 
+  it("shows the latest private note of the account's card note bot, under its overview", async () => {
+    const target = (accountId: number) => ({
+      forumChannelId: FORUM,
+      name: "Acme",
+      tags: TAGS,
+      cardNoteBotId: accountId + 3,
+    });
+    const { relay, forum, store } = relayWith({ card: ticketCard, target });
+    const conversation = message().conversation;
+    const note = (id: number, content: string, sender: { id: number; type: string }) =>
+      message({ id, messageType: "outgoing", private: true, content, sender: { name: "Customer Context", ...sender } });
+    await relay.relay(message());
+    await relay.relay(note(2, "**Customer accounts** of jane@example.com", { id: 6, type: "agent_bot" }));
+    await relay.relay(note(3, "Not the card's: another bot", { id: 5, type: "agent_bot" }));
+    await relay.relay(note(4, "Not the card's: a user", { id: 6, type: "user" }));
+    await relay.sync(3, conversation, "thread-1");
+    const container = forum.calls.at(-1)?.[1].components?.[0];
+    const parts = container?.type === ComponentType.Container ? container.components : [];
+    expect(parts[1]).toEqual({ type: ComponentType.TextDisplay, content: "**Customer accounts** of jane@example.com" });
+
+    await relay.relay(note(5, "**Customer accounts** after the reopen", { id: 6, type: "agent_bot" }));
+    expect(store.conversation(3, 12)?.cardNote).toBe("**Customer accounts** after the reopen");
+  });
+
   it("offers the triage bot's draft under its answer, until it is sent or the customer writes again", async () => {
     const { relay, forum } = relayWith({ card: ticketCard });
     const conversation = { ...message().conversation, waitingSince: 1_790_000_000 };

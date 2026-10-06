@@ -43,7 +43,7 @@ export function relayFor(settings: Settings, forum: ForumClient, store: RelaySto
       const account = settings.account(accountId);
       if (!account) throw new Error(`Account ${accountId} is not configured`);
       const tags = settings.config.forumTags[account.forumChannelId] ?? {};
-      return { forumChannelId: account.forumChannelId, name: account.name, tags };
+      return { forumChannelId: account.forumChannelId, name: account.name, tags, cardNoteBotId: account.cardNoteBotId };
     },
     topicAttribute: settings.config.relay.topicAttribute,
     maxChunks: settings.config.relay.maxChunks,

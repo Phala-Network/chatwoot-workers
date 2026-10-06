@@ -253,7 +253,9 @@ token in `CHATWOOT_AGENT_TOKENS`; others get a refusal only they see.
 
 **The card.** Every post ends with the ticket's card, coloured by its status: the ticket and its
 customer; the channel, the customer's email or phone number, and a link to Chatwoot; the status,
-the assignee, and the labels. Then a row of buttons per concern:
+the assignee, and the labels. With `accounts[].cardNoteBotId`, the latest private note of that agent bot follows (up
+to 2,000 characters): a service's own record about the ticket, such as what it knows of the customer, kept in view
+while the note itself stays in the post. Then a row of buttons per concern:
 
 1. Answering: **Write reply**, led by **Reply with draft** (highlighted) after a triage bot's
    answer with a draft.
@@ -324,6 +326,7 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `accounts[].name` | non-empty string | required | Shown in post titles (`[<name> #12] …`) and command confirmations. |
 | `accounts[].forumChannelId` | Discord id (17–20 digits) | required | The forum channel of the account's posts. |
 | `accounts[].inboxIds` | non-empty array of integers > 0 | every inbox | Relay only conversations of these inboxes. |
+| `accounts[].cardNoteBotId` | integer > 0 | unset | The account's agent bot whose latest private note the card shows ([the card](#commands-and-buttons)). |
 | `agents[]` | unique `discordUserId`, unique `chatwootUserId` | `[]` | Links Discord users to Chatwoot agents: commands, assignee pings, mentions in private notes, `/assign` targets, and the Discord avatar on the agent's messages. |
 | `agents[].discordUserId` | Discord id (17–20 digits) | required | The agent's Discord user. |
 | `agents[].chatwootUserId` | integer > 0 | required | The agent's Chatwoot user id, the same in every account: the `id` from `GET /api/v1/profile` with the agent's own access token, or from an administrator's `GET /api/v1/accounts/<account id>/agents`. |

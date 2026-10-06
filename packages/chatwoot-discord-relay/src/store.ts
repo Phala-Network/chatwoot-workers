@@ -106,6 +106,8 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE conversations DROP COLUMN context_message_id;
    ALTER TABLE conversations DROP COLUMN context_checked_at;
    ALTER TABLE conversations DROP COLUMN context_for;`,
+  // The latest private note by the account's card note bot, which the card shows.
+  `ALTER TABLE conversations ADD COLUMN card_note TEXT;`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;
@@ -136,6 +138,7 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
   ["answerId", "answer_id"],
   ["answerSourceId", "answer_source_id"],
   ["customerMessageId", "customer_message_id"],
+  ["cardNote", "card_note"],
 ];
 
 export type { Job } from "../../../shared/store.ts";
@@ -173,6 +176,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
         answer_id: string | null;
         answer_source_id: string | null;
         customer_message_id: string | null;
+        card_note: string | null;
       }>(
         `SELECT ${COLUMNS.map(([, column]) => column).join(", ")} FROM conversations
          WHERE account_id = ? AND conversation_id = ?`,
@@ -197,6 +201,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
       answerId: row.answer_id ?? undefined,
       answerSourceId: row.answer_source_id ?? undefined,
       customerMessageId: row.customer_message_id ?? undefined,
+      cardNote: row.card_note ?? undefined,
     };
   }
 
