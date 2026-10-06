@@ -2,12 +2,15 @@
 // customer, e.g. their accounts in its products, as Markdown for one Discord message. The request is
 // `POST {"email", "name", "phone"}`, signed like Chatwoot's webhooks with CUSTOMER_CONTEXT_SECRET (`x-timestamp`, and
 // `x-signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">`); the answer is `{"markdown": "..."}`, empty for
-// nothing to show.
+// nothing to show. A new post's first message waits for the lookup (it is shown under the post's header), so a lookup
+// gives up after CONTEXT_TIMEOUT_MS: the slowest product answers in about 2 s.
 
 import type { Fetch } from "../../../../shared/chatwoot/api.ts";
 import type { RelayConversation } from "../../../../shared/types.ts";
 
 export type ContextLookup = (contact: RelayConversation["contact"]) => Promise<string | undefined>;
+
+export const CONTEXT_TIMEOUT_MS = 5_000;
 
 const encoder = new TextEncoder();
 

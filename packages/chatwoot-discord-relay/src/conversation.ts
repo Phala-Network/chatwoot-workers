@@ -30,7 +30,7 @@ import { DiscordForum } from "./discord/forum.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
 import type { Env } from "./env.ts";
 import { hub } from "./hub.ts";
-import { contextLookup } from "./relay/context.ts";
+import { CONTEXT_TIMEOUT_MS, contextLookup } from "./relay/context.ts";
 import { latestMessageId, type ProcessorContext, processConversation, relayFor } from "./relay/processor.ts";
 import { isUnknownCard } from "./relay/relay.ts";
 import { processMessageUpdate } from "./relay/updates.ts";
@@ -304,7 +304,7 @@ export class Conversation extends DurableObject<Env> {
       claimThread,
       customerContext:
         context && settings.secrets.CUSTOMER_CONTEXT_SECRET
-          ? contextLookup(context.url, settings.secrets.CUSTOMER_CONTEXT_SECRET, budget.fetch)
+          ? contextLookup(context.url, settings.secrets.CUSTOMER_CONTEXT_SECRET, budget.within(CONTEXT_TIMEOUT_MS))
           : undefined,
       reserveTriage: (hour, event) => hub(this.env).reserveTriage(hour, event, settings.config.triage.perHour),
     });
