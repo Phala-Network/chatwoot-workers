@@ -37,10 +37,13 @@ deleted in Discord, it is sent again without the missing tags, and a warning nam
 ## Pings and notifications
 
 - A newly assigned agent who is linked in `agents[]` is pinged once (a change of their Chatwoot
-  name does not count as a new assignment), in a `-# Assigned to @name` notice after the live
-  messages that came with the assignment (after the last one, when the conversation was
-  reassigned several times in a row), and is added to the post, so it shows in their thread list
-  (if Discord refuses, e.g. they left the server, only a warning is logged). After that, every
+  name does not count as a new assignment), in Chatwoot's assignment line that names them
+  (`Assigned to @name by Sam`; after several reassignments in a row, the line naming the last
+  one), and is added to the post, so it shows in their thread list (if Discord refuses, e.g.
+  they left the server, only a warning is logged). Chatwoot may create the line a little after
+  the assignment; when no such line comes within 2 minutes (e.g. a conversation assigned at
+  creation), a `-# Assigned to @name` notice pings them instead. Customer messages do not ping
+  them while their announcement waits. After that, every
   customer message pings the linked assignee, on a line at its end. A linked
   agent @mentioned in a private note is pinged there; other Chatwoot mentions show as `@name`.
   Nothing else pings anyone.
@@ -54,6 +57,8 @@ deleted in Discord, it is sent again without the missing tags, and a warning nam
 
 ## Message content
 
+- Chatwoot's activity lines (assignments, status changes, labels) are small italic text
+  (`-# _Resolved by Sam_`), like the relay's own notices, so the conversation stands out.
 - Messages longer than Discord's 2000 characters are split at line breaks, at most
   `relay.maxChunks` (4) Discord messages, then a "Message truncated … Full text: <link>" note.
 - An email is posted without the earlier emails it quotes, as Chatwoot itself forwards it (its

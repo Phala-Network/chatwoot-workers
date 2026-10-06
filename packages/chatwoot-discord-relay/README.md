@@ -392,14 +392,15 @@ Upgrading from a relay with built-in routing (0.28.0 or earlier) and rolling bac
 The Worker does not see Discord messages, so a triage bot's side reports each answer once it is
 in the post: `POST
 /triage/answered` with `{"threadId":"<post id>","answerId":"<answer message id>","replyTo":"<the
-message it answers>","draft":"<the reply draft>"}`, signed like a Chatwoot webhook (`x-timestamp`, Unix seconds, and `x-signature`,
+message it answers>","draft":"<the reply draft, if it has one>"}`, signed like a Chatwoot webhook (`x-timestamp`, Unix seconds, and `x-signature`,
 `sha256=` and the hex HMAC-SHA256 of `<timestamp>.<body>` with `TRIAGE_HOOK_SECRET`). The Worker
 keeps the draft for 14 days and moves the post's card under the answer, led by **Reply with draft**,
 once per answer (a repeated call adds nothing), while the message it answers is the customer's
-latest (an answer to an earlier one, or older than one already reported, changes nothing). Report only answers that have a draft, and only
-after they were sent, so the card follows them (right after the answer unless another message
-came in between). The hook is a convenience: if a call is lost, the card offers no draft, and
-**Reply with this** still works. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md) for the agent's side.
+latest (an answer to an earlier one, or older than one already reported, offers nothing). Report every answer, after
+it was sent, with its draft when it has one, so the card follows it (right after the answer unless another message
+came in between): the bot is called one call at a time, and a customer message that comes while it answers is
+called for once it reports its answer (or 5 minutes after the call, if no report comes), rather than interrupting
+it. The hook is a convenience: if a call is lost, the card offers no draft, and **Reply with this** still works. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md) for the agent's side.
 
 ## Support queue
 
@@ -448,7 +449,7 @@ See [SECURITY.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/SE
 | Free plan limit | How this service stays within it |
 |---|---|
 | 10 ms CPU per Worker request | The Worker verifies a signature, parses JSON, and makes one Durable Object call. Bodies over 2 MB are rejected; a very large webhook that fails is relayed by the next sweep. |
-| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 27 requests remain (its parts, 15 for everything else a message may need, and 12 to finish the run), so the budget must be at least `relay.maxChunks` + 32 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
+| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 28 requests remain (its parts, 16 for everything else a message may need, and 12 to finish the run), so the budget must be at least `relay.maxChunks` + 33 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
 | 128 MB memory | Attachments are capped at 25 MB each / 50 MB per command. |
 | 100,000 Worker requests/day | See the estimate below. |
 | Durable Objects (SQLite): 100,000 requests/day, 100,000 rows written/day | See the estimate below. |

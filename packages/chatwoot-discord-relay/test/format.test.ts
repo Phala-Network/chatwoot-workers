@@ -43,7 +43,7 @@ describe("format", () => {
     expect(body(message({ messageType: "outgoing", private: true, content: "Refund approved" }))).toBe(
       "🔒 **Internal note**\nRefund approved",
     );
-    expect(body(message({ messageType: "activity", content: "Resolved by Sam" }))).toBe("_Resolved by Sam_");
+    expect(body(message({ messageType: "activity", content: "Resolved by Sam" }))).toBe("-# _Resolved by Sam_");
     expect(
       body(message({ content: "", attachments: [{ type: "file", url: "https://files.example.com/a.png" }] })),
     ).toBe("📎 https://files.example.com/a.png");

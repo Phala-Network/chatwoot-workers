@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-06
+
+### Changed
+
+- Quieter posts. Activity lines are small italic text, like the relay's notices. A newly assigned agent is pinged in
+  Chatwoot's assignment line that names them (`Assigned to @Kim by Sam`) instead of in a notice of its own; only
+  when no such line comes within 2 minutes (e.g. a conversation assigned at creation) does a `-# Assigned to @Kim`
+  notice ping them.
+- The triage bot is called one call at a time: a customer message that comes while it answers is called for once
+  its hook reports the answer, or 5 minutes after the call without a report, instead of interrupting it
+  (Hermes posted "Redirected current run"). The hook may report an answer without a draft: it frees the bot and
+  offers nothing on the card.
+- `relay.subrequestBudget` must be at least `relay.maxChunks` + 33 (was + 32): a message may add the assignee its
+  assignment line pings to the post.
+
 ## [0.45.0] - 2026-10-06
 
 ### Changed
