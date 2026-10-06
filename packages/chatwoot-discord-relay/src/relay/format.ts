@@ -154,7 +154,7 @@ export function body(message: RelayMessage): string {
   const content = markdownImages(chatwootMentions(message.content, message.mentionedAgents)).trim();
   const parts: string[] = [];
   if (message.messageType === "activity") {
-    if (content) parts.push(`_${content}_`);
+    if (content) parts.push(`-# _${content}_`);
   } else {
     if (message.private) parts.push("🔒 **Internal note**");
     if (content) parts.push(content);

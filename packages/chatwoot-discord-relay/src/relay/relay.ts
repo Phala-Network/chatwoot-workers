@@ -110,6 +110,10 @@ export interface PostFields {
   customerMessageId: string;
   /** The latest private note by the account's cardNoteBotId, which the card shows. */
   cardNote: string;
+  /** When the triage bot was last called (ms); 0 once it answered: it is not called again meanwhile. */
+  triageCalledAt: number;
+  /** When a new assignee was first left to be pinged on Chatwoot's assignment line (ms; see announceAssignee). */
+  assigneeWaitSince: number;
 }
 
 export interface RelayStore {
@@ -180,6 +184,11 @@ export interface ContactTicket {
   postUrl: string | undefined;
 }
 
+/** How long a triage call waits for its answer before another call may follow (a lost hook does not stop calls). */
+const TRIAGE_ANSWER_WAIT_MS = 5 * 60 * 1000;
+/** How long a new assignee's ping waits for Chatwoot's assignment line before it goes in a notice of its own. */
+const ASSIGNMENT_LINE_WAIT_MS = 2 * 60 * 1000;
+
 /** How many of a contact's earlier tickets a new post's header lists. */
 const EARLIER_TICKETS = 5;
 
@@ -238,7 +247,11 @@ export class Relay {
     const accountId = message.account.id;
     const conversation = message.conversation;
     const notification = await this.notifier.notification(message);
-    const parts = this.parts(message, text, notification);
+    const assignment =
+      message.messageType === "activity" ? this.assignmentPing(accountId, conversation, text) : undefined;
+    const parts = assignment
+      ? this.parts(message, assignment.text, { lines: [], users: [assignment.user] })
+      : this.parts(message, text, notification);
     let threadId = store.conversation(accountId, conversation.id)?.threadId;
     if (threadId) {
       try {
@@ -254,6 +267,14 @@ export class Relay {
       await this.post(message, parts, threadId);
     }
     this.unarchived(accountId, conversation);
+    if (assignment) {
+      await this.addMember(accountId, conversation.id, assignment.user);
+      store.updateConversation(accountId, conversation.id, {
+        announcedAssignee: assigneeKey(conversation),
+        announcePending: 0,
+        assigneeWaitSince: 0,
+      });
+    }
     if (this.isCardNote(message)) {
       store.updateConversation(accountId, conversation.id, { cardNote: message.content.trim() });
     }
@@ -266,19 +287,20 @@ export class Relay {
   }
 
   /**
-   * The triage bot answered `sourceId` in the post with a draft (its hook reports each answer
-   * once it is there): the card offers that draft, under the answer, from the next sync, while the
-   * customer wrote nothing newer. Receipts may come late or out of order: an answer older than
-   * the one recorded, or to an earlier customer message, changes nothing.
+   * The triage bot answered `sourceId` in the post (its hook reports each answer once it is there): it is done, so a
+   * call owed meanwhile may follow (see triage). An answer with a draft is offered on the card, under the answer, from
+   * the next sync, until it is used (see draftUsed). Receipts may come late or out of order: an answer older than the
+   * one recorded, or to an earlier customer message, offers nothing.
    */
-  answered(accountId: number, conversationId: number, answerId: string, sourceId: string): void {
+  answered(accountId: number, conversationId: number, answerId: string, sourceId: string, drafted = true): void {
     const { store } = this.options;
     const post = store.conversation(accountId, conversationId);
     // A part of a customer message stands for the whole message: its first part.
     const source = store.firstPart(accountId, conversationId, sourceId) ?? sourceId;
-    if (!post?.threadId || !isAfter(answerId, post.answerId) || !answersLatest(source, post.customerMessageId)) {
-      return;
-    }
+    if (!post?.threadId) return;
+    // The bot answered: a call owed meanwhile may follow.
+    store.updateConversation(accountId, conversationId, { triageCalledAt: 0 });
+    if (!drafted || !isAfter(answerId, post.answerId) || !answersLatest(source, post.customerMessageId)) return;
     store.updateConversation(accountId, conversationId, { answerId, answerSourceId: source, cardCovered: 1 });
   }
 
@@ -291,15 +313,24 @@ export class Relay {
   }
 
   /**
-   * After a run's messages, while an announcement is pending: pings a newly assigned, linked
-   * agent in a notice of its own, so the ping follows the latest assignment line and names the
-   * current assignee however often the conversation was reassigned in between, and adds them to
-   * the post. The assignee counts as announced either way. A failed notice stays pending, so the
-   * job's retry posts it even when there are no new messages.
+   * After a run's messages, while an announcement is pending: a newly assigned, linked agent is pinged on Chatwoot's
+   * assignment line that names them (see assignmentPing), which Chatwoot may create a little after the assignment.
+   * Until that line comes, the announcement waits; after ASSIGNMENT_LINE_WAIT_MS it pings them in a notice of its
+   * own, which names the current assignee however often the conversation was reassigned, and adds them to the post.
+   * The assignee counts as announced either way. A failed notice stays pending, so the job's retry posts it even
+   * when there are no new messages.
    */
   async announceAssignee(accountId: number, conversation: RelayConversation): Promise<void> {
+    const { store } = this.options;
     const discordId = this.notifier.newAssignee(accountId, conversation);
     if (discordId) {
+      const now = (this.options.now?.() ?? new Date()).getTime();
+      const since = store.conversation(accountId, conversation.id)?.assigneeWaitSince;
+      if (!since) {
+        store.updateConversation(accountId, conversation.id, { assigneeWaitSince: now });
+        return;
+      }
+      if (now - since < ASSIGNMENT_LINE_WAIT_MS) return;
       const notice = this.notice(assignedLine(`<@${discordId}>`));
       const posted = await this.postMessage(accountId, conversation, {
         ...notice,
@@ -308,10 +339,40 @@ export class Relay {
       if (posted === undefined) return;
       await this.addMember(accountId, conversation.id, discordId);
     }
-    this.options.store.updateConversation(accountId, conversation.id, {
+    store.updateConversation(accountId, conversation.id, {
       announcedAssignee: assigneeKey(conversation),
       announcePending: 0,
+      assigneeWaitSince: 0,
     });
+  }
+
+  /**
+   * When the conversation's job should run again without new events: once a waiting announcement's fallback is due
+   * (see announceAssignee), or an owed triage call whose earlier call went unanswered (see triage).
+   */
+  wakeAt(accountId: number, conversationId: number): number | undefined {
+    const post = this.options.store.conversation(accountId, conversationId);
+    const due = [
+      post?.announcePending && post.assigneeWaitSince ? post.assigneeWaitSince + ASSIGNMENT_LINE_WAIT_MS : 0,
+      post?.triageMessageId && post.triageCalledAt ? post.triageCalledAt + TRIAGE_ANSWER_WAIT_MS : 0,
+    ].filter((at) => at > 0);
+    return due.length > 0 ? Math.min(...due) : undefined;
+  }
+
+  /**
+   * Chatwoot's activity line `text`, if it names a newly assigned, linked agent ("Assigned to Paco by …"), with that
+   * name as their mention: the line itself pings them, instead of a notice of its own.
+   */
+  private assignmentPing(
+    accountId: number,
+    conversation: RelayConversation,
+    text: string,
+  ): { text: string; user: string } | undefined {
+    const user = this.notifier.newAssignee(accountId, conversation);
+    const name = conversation.assignee?.name;
+    if (!user || !name) return undefined;
+    const named = new RegExp(`(?<![\\p{L}\\p{N}])${RegExp.escape(name)}(?![\\p{L}\\p{N}])`, "u");
+    return named.test(text) ? { text: text.replace(named, `<@${user}>`), user } : undefined;
   }
 
   /**
@@ -325,6 +386,10 @@ export class Relay {
     const recorded = store.conversation(accountId, conversation.id);
     const messageId = recorded?.triageMessageId;
     if (!messageId) return false;
+    // While the bot answers an earlier call, the call stays owed: its answer's run makes it (a lost answer, the
+    // next run after TRIAGE_ANSWER_WAIT_MS). A second call into a busy bot only interrupts it.
+    const now = (this.options.now?.() ?? new Date()).getTime();
+    if (recorded?.triageCalledAt && now - recorded.triageCalledAt < TRIAGE_ANSWER_WAIT_MS) return false;
     const decision = await this.notifier.triage(accountId, conversation, messageId, recorded?.triageAnswered === 1);
     if (decision && "call" in decision) return true;
     if (decision) await this.notify(accountId, conversation, decision.note);
@@ -349,7 +414,12 @@ export class Relay {
       });
       if (posted === undefined) return;
     }
-    store.updateConversation(accountId, conversation.id, { triageMessageId: 0, triageAnswered: 0 });
+    const calledAt = triage ? (this.options.now?.() ?? new Date()).getTime() : 0;
+    store.updateConversation(accountId, conversation.id, {
+      triageMessageId: 0,
+      triageAnswered: 0,
+      triageCalledAt: calledAt,
+    });
   }
 
   /**

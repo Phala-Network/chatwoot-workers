@@ -219,7 +219,16 @@ async function sync(store: Store, settings: Settings, limit?: number): Promise<P
   throw new Error("never finished");
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+/** Moves the clock past the wait for Chatwoot's assignment line, after which the announcement is a notice. */
+function afterAssignmentWait(): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 2 * 60 * 1000);
+}
 
 describe("processConversation", () => {
   it("upgrades a 0.1.0 post without replaying history or re-notifying its unchanged owner, then notifies reassignment", async () => {
@@ -273,7 +282,7 @@ describe("processConversation", () => {
       store.migrate();
       await sync(store, testSettings());
       await sync(store, testSettings());
-      expect(world.replies()).toEqual(["Update from Kim", "_Kim updated the ticket_"]);
+      expect(world.replies()).toEqual(["Update from Kim", "-# _Kim updated the ticket_"]);
       expect(world.sent("PUT", `/thread-members/${ALICE}`)).toEqual([]);
       expect(world.posts().every((post) => post.thread === "100000000000000101")).toBe(true);
       expect(world.cards()).toHaveLength(1);
@@ -288,12 +297,7 @@ describe("processConversation", () => {
       world.messages.push({ id: 503, content: "Assigned to Bob", message_type: 2 });
       await sync(store, testSettings());
       await sync(store, testSettings());
-      expect(world.replies()).toEqual([
-        "Update from Kim",
-        "_Kim updated the ticket_",
-        "_Assigned to Bob_",
-        `-# Assigned to <@${BOB}>`,
-      ]);
+      expect(world.replies()).toEqual(["Update from Kim", "-# _Kim updated the ticket_", `-# _Assigned to <@${BOB}>_`]);
       expect(world.sent("PUT", `/thread-members/${BOB}`)).toHaveLength(1);
     });
   });
@@ -406,8 +410,12 @@ describe("processConversation", () => {
       world.messages.push({ id: 3, content: "just now", message_type: 0, created_at: now() - 5 });
       await sync(store, settings);
       await sync(store, settings);
-      expect(world.replies()).toEqual(["last month", "an answer", "just now", `-# Assigned to <@${ALICE}>`, CALL]);
-      expect(world.posts().at(-2)?.body.allowed_mentions).toEqual({ parse: [], users: [ALICE] });
+      // Without Chatwoot's assignment line, the announcement waits for it, then pings in a notice.
+      expect(world.replies()).toEqual(["last month", "an answer", "just now", CALL]);
+      afterAssignmentWait();
+      await sync(store, settings);
+      expect(world.replies().slice(-2)).toEqual([CALL, `-# Assigned to <@${ALICE}>`]);
+      expect(world.posts().at(-1)?.body.allowed_mentions).toEqual({ parse: [], users: [ALICE] });
       expect(world.sent("PUT", `/thread-members/${ALICE}`)).toHaveLength(1);
     });
   });
@@ -583,7 +591,7 @@ describe("processConversation", () => {
     });
   });
 
-  it("after two reassignments in one run, pings the latest assignee once, after both activity lines", async () => {
+  it("after two reassignments in one run, pings the latest assignee once, in the line that names them", async () => {
     const world = new World();
     world.messages = [{ id: 1, content: "hello", message_type: 0, created_at: now() - 60 }];
     await withStore(async (store) => {
@@ -601,12 +609,11 @@ describe("processConversation", () => {
       await sync(store, settings);
       const posted = world
         .posts()
-        .slice(-3)
+        .slice(-2)
         .map((post) => [post.body.content, post.body.allowed_mentions]);
       expect(posted).toEqual([
-        ["_Assigned to Alice by Sam_", { parse: [] }],
-        ["_Assigned to Bob by Sam_", { parse: [] }],
-        [`-# Assigned to <@${BOB}>`, { parse: [], users: [BOB] }],
+        ["-# _Assigned to Alice by Sam_", { parse: [] }],
+        [`-# _Assigned to <@${BOB}> by Sam_`, { parse: [], users: [BOB] }],
       ]);
       // The new assignee is added to the post, once.
       expect(world.sent("PUT", `/thread-members/${BOB}`)).toHaveLength(1);
@@ -620,11 +627,13 @@ describe("processConversation", () => {
     world.failAnnouncements = 1;
     await withStore(async (store) => {
       const settings = testSettings();
+      await sync(store, settings);
+      afterAssignmentWait();
       await expect(sync(store, settings)).rejects.toThrow();
       await sync(store, settings);
       // The customer message was posted once; the announcement failed, then its retry succeeded.
-      expect(world.replies()).toEqual(["hello", `-# Assigned to <@${BOB}>`, `-# Assigned to <@${BOB}>`, CALL]);
-      expect(world.posts().at(-2)?.body.allowed_mentions).toEqual({ parse: [], users: [BOB] });
+      expect(world.replies()).toEqual(["hello", CALL, `-# Assigned to <@${BOB}>`, `-# Assigned to <@${BOB}>`]);
+      expect(world.posts().at(-1)?.body.allowed_mentions).toEqual({ parse: [], users: [BOB] });
     });
   });
 

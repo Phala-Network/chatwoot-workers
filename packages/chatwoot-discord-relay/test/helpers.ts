@@ -67,6 +67,7 @@ export class MemoryStore implements RelayStore {
       titleMessageId,
     } = row;
     const { cardId, cardCovered, answerId, answerSourceId, customerMessageId, cardNote } = row;
+    const { triageCalledAt, assigneeWaitSince } = row;
     return {
       threadId,
       state,
@@ -83,6 +84,8 @@ export class MemoryStore implements RelayStore {
       answerSourceId,
       customerMessageId,
       cardNote,
+      triageCalledAt,
+      assigneeWaitSince,
     };
   }
   updateConversation(a: number, c: number, patch: Partial<PostFields>) {
