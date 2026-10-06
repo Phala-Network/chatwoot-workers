@@ -166,7 +166,15 @@ export function ticketCard(ticket: CardTicket, answerId?: string): APIMessageTop
       accent_color: STATUS_COLORS[ticket.status] ?? null,
       components: [
         { type: ComponentType.TextDisplay, content: `${heading}\n-# ${details}\n${summary}` },
-        ...(ticket.note ? [{ type: ComponentType.TextDisplay, content: clip(ticket.note, CARD_NOTE) } as const] : []),
+        // A note keeps its lines (clip makes one line of a name or label).
+        ...(ticket.note
+          ? [
+              {
+                type: ComponentType.TextDisplay,
+                content: Array.from(ticket.note).slice(0, CARD_NOTE).join(""),
+              } as const,
+            ]
+          : []),
         row(
           answerId
             ? [

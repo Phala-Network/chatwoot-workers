@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-10-05
+
+### Fixed
+
+- The card shows a note with its lines (0.43.0 made one line of it).
+
 ## [0.43.0] - 2026-10-05
 
 ### Added
@@ -864,7 +870,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.1...HEAD
+[0.43.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.0...chatwoot-discord-relay@0.43.1
 [0.43.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.42.0...chatwoot-discord-relay@0.43.0
 [0.42.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.2...chatwoot-discord-relay@0.42.0
 [0.41.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.1...chatwoot-discord-relay@0.41.2

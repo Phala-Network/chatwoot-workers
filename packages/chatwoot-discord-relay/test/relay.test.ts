@@ -853,13 +853,18 @@ describe("the card", () => {
     const note = (id: number, content: string, sender: { id: number; type: string }) =>
       message({ id, messageType: "outgoing", private: true, content, sender: { name: "Customer Context", ...sender } });
     await relay.relay(message());
-    await relay.relay(note(2, "**Customer accounts** of jane@example.com", { id: 6, type: "agent_bot" }));
+    await relay.relay(
+      note(2, "**Customer accounts** of jane@example.com\n**Clawdi**: no account", { id: 6, type: "agent_bot" }),
+    );
     await relay.relay(note(3, "Not the card's: another bot", { id: 5, type: "agent_bot" }));
     await relay.relay(note(4, "Not the card's: a user", { id: 6, type: "user" }));
     await relay.sync(3, conversation, "thread-1");
     const container = forum.calls.at(-1)?.[1].components?.[0];
     const parts = container?.type === ComponentType.Container ? container.components : [];
-    expect(parts[1]).toEqual({ type: ComponentType.TextDisplay, content: "**Customer accounts** of jane@example.com" });
+    expect(parts[1]).toEqual({
+      type: ComponentType.TextDisplay,
+      content: "**Customer accounts** of jane@example.com\n**Clawdi**: no account",
+    });
 
     await relay.relay(note(5, "**Customer accounts** after the reopen", { id: 6, type: "agent_bot" }));
     expect(store.conversation(3, 12)?.cardNote).toBe("**Customer accounts** after the reopen");
