@@ -67,7 +67,7 @@ export class MemoryStore implements RelayStore {
       titleMessageId,
     } = row;
     const { cardId, cardCovered, answerId, answerSourceId, customerMessageId, cardNote } = row;
-    const { triageCalledAt, assigneeWaitSince } = row;
+    const { assigneeWaitSince } = row;
     return {
       threadId,
       state,
@@ -84,7 +84,6 @@ export class MemoryStore implements RelayStore {
       answerSourceId,
       customerMessageId,
       cardNote,
-      triageCalledAt,
       assigneeWaitSince,
     };
   }

@@ -110,9 +110,11 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE conversations ADD COLUMN card_note TEXT;`,
   // 0.45 offers a draft until it is used, which earlier versions did not record: their drafts are taken as used.
   `UPDATE conversations SET answer_source_id = '' WHERE answer_source_id IS NOT NULL;`,
-  // The triage bot's call in flight, and a new assignee's ping waiting for Chatwoot's assignment line.
+  // The triage bot's call in flight (0.46 only), and a new assignee's ping waiting for Chatwoot's assignment line.
   `ALTER TABLE conversations ADD COLUMN triage_called_at INTEGER;
    ALTER TABLE conversations ADD COLUMN assignee_wait_since INTEGER;`,
+  // 0.47 lets the triage bot take a newer message into the turn it runs, so a call in flight is not tracked.
+  `ALTER TABLE conversations DROP COLUMN triage_called_at;`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;
@@ -144,7 +146,6 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
   ["answerSourceId", "answer_source_id"],
   ["customerMessageId", "customer_message_id"],
   ["cardNote", "card_note"],
-  ["triageCalledAt", "triage_called_at"],
   ["assigneeWaitSince", "assignee_wait_since"],
 ];
 
@@ -184,7 +185,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
         answer_source_id: string | null;
         customer_message_id: string | null;
         card_note: string | null;
-        triage_called_at: number | null;
         assignee_wait_since: number | null;
       }>(
         `SELECT ${COLUMNS.map(([, column]) => column).join(", ")} FROM conversations
@@ -211,7 +211,6 @@ export class Store extends QueueStore implements RelayStore, Cache {
       answerSourceId: row.answer_source_id ?? undefined,
       customerMessageId: row.customer_message_id ?? undefined,
       cardNote: row.card_note ?? undefined,
-      triageCalledAt: row.triage_called_at ?? undefined,
       assigneeWaitSince: row.assignee_wait_since ?? undefined,
     };
   }
@@ -274,7 +273,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
        ON CONFLICT (account_id, conversation_id) DO UPDATE SET thread_id = excluded.thread_id, state = NULL,
          announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
          card_id = excluded.card_id, card_covered = NULL, answer_id = NULL, answer_source_id = NULL,
-         customer_message_id = NULL, triage_called_at = NULL, assignee_wait_since = NULL`,
+         customer_message_id = NULL, assignee_wait_since = NULL`,
       accountId,
       conversationId,
       threadId,
@@ -378,7 +377,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
     this.sql.exec(
       `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL,
          title_subject = NULL, title = NULL, title_message_id = NULL, card_id = NULL, card_covered = NULL, answer_id = NULL,
-         answer_source_id = NULL, customer_message_id = NULL, triage_called_at = NULL, assignee_wait_since = NULL
+         answer_source_id = NULL, customer_message_id = NULL, assignee_wait_since = NULL
        WHERE account_id = ? AND conversation_id = ?`,
       accountId,
       conversationId,

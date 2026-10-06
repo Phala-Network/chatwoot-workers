@@ -392,15 +392,13 @@ Upgrading from a relay with built-in routing (0.28.0 or earlier) and rolling bac
 The Worker does not see Discord messages, so a triage bot's side reports each answer once it is
 in the post: `POST
 /triage/answered` with `{"threadId":"<post id>","answerId":"<answer message id>","replyTo":"<the
-message it answers>","draft":"<the reply draft, if it has one>"}`, signed like a Chatwoot webhook (`x-timestamp`, Unix seconds, and `x-signature`,
+message it answers>","draft":"<the reply draft>"}`, signed like a Chatwoot webhook (`x-timestamp`, Unix seconds, and `x-signature`,
 `sha256=` and the hex HMAC-SHA256 of `<timestamp>.<body>` with `TRIAGE_HOOK_SECRET`). The Worker
 keeps the draft for 14 days and moves the post's card under the answer, led by **Reply with draft**,
 once per answer (a repeated call adds nothing), while the message it answers is the customer's
-latest (an answer to an earlier one, or older than one already reported, offers nothing). Report every answer, after
-it was sent, with its draft when it has one, so the card follows it (right after the answer unless another message
-came in between): the bot is called one call at a time, and a customer message that comes while it answers is
-called for once it reports its answer (or 5 minutes after the call, if no report comes), rather than interrupting
-it. The hook is a convenience: if a call is lost, the card offers no draft, and **Reply with this** still works. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md) for the agent's side.
+latest (an answer to an earlier one, or older than one already reported, changes nothing). Report only answers that
+have a draft, and only after they were sent, so the card follows them (right after the answer unless another message
+came in between). The hook is a convenience: if a call is lost, the card offers no draft, and **Reply with this** still works. See [Connecting an AI agent](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/ai-agent.md) for the agent's side.
 
 ## Support queue
 

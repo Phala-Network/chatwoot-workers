@@ -75,13 +75,12 @@ app.post("/chatwoot/webhook", bodyLimit({ maxSize: 2 * 1024 * 1024 }), async (c)
 });
 
 // The triage bot's hook, signed like Chatwoot's webhooks: its answer `answerId` to message
-// `replyTo` is in the post `threadId`, with the reply `draft` it proposes, if any: an answer without one only says the
-// bot is done (see Conversation.triageAnswered).
+// `replyTo` is in the post `threadId`, with the reply `draft` it proposes (see Conversation.triageAnswered).
 const answerSchema = z.strictObject({
   threadId: z.string().regex(/^\d{17,20}$/),
   answerId: z.string().regex(/^\d{17,20}$/),
   replyTo: z.string().regex(/^\d{17,20}$/),
-  draft: z.string().trim().min(1).max(CONTENT_MAX).optional(),
+  draft: z.string().trim().min(1).max(CONTENT_MAX),
 });
 
 app.post("/triage/answered", bodyLimit({ maxSize: 64 * 1024 }), async (c) => {
@@ -140,8 +139,7 @@ app.post("/discord/interactions", bodyLimit({ maxSize: 1024 * 1024 }), async (c)
         const kept = ticket
           ? await conversationStub(c.env, ticket.accountId, ticket.conversationId).answerDraft(answerId)
           : null;
-        // An answer without a draft is kept as "" (see Conversation.triageAnswered).
-        if (kept) return { text: kept };
+        if (kept !== null) return { text: kept };
         const rest = new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, (request) =>
           fetch(request, { signal: deadline }),
         );

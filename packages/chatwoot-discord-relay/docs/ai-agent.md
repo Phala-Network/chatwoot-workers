@@ -35,7 +35,9 @@ notice of its own that mentions it:
 
 The call is the last message of the run, so when the agent sees it, the customer's messages and
 everything posted with them are already in the post, and nothing the run posts follows it. A run
-with several such customer messages calls the agent once. The agent reads the post's recent
+with several such customer messages calls the agent once; a customer message that comes while the agent answers
+calls it again, so an agent that takes a message into the turn it runs (Hermes redirects its run) answers once,
+for the latest. The agent reads the post's recent
 messages to see what to answer (an agent that only reads the message that mentions it sees just
 the call). When a public reply (a person's or a bot's) followed the customer's latest message,
 or the conversation is no longer open by the end of the run, the agent is not called, and a note
@@ -91,12 +93,11 @@ I have issued a corrected copy; you will find it under Billing → Invoices.
 A human agent then uses **Apps → Reply with this** on that message. It opens the `/reply` editor
 prefilled with the draft; they can edit it, add attachments, and submit.
 
-Optionally, the agent's side reports each answer once it is in the post (the
+Optionally, the agent's side reports each answer with a draft once it is in the post (the
 [triage bot hook](../README.md#triage-bot-hook): the answer's message id, the message it replies
-to, and its draft if it has one, signed with `TRIAGE_HOOK_SECRET`). The post's card then moves under an
-answer with a draft, led by **Reply with draft**, which opens the same editor with that draft until a reply is
-sent with it. A report also tells the relay the agent is done: while it answers, a newer customer message is not
-called for until it reports (or 5 minutes pass), so the agent is never interrupted mid-answer. Reply to the message
+to, and the draft, signed with `TRIAGE_HOOK_SECRET`). The post's card then moves under the
+answer, led by **Reply with draft**, which opens the same editor with that draft until a reply is
+sent with it. Reply to the message
 you answer, so the card knows which question the draft is for. The reply is sent in
 Chatwoot with that human's own access token, so it appears under their name, Chatwoot's
 permissions apply, and an unassigned conversation is assigned to them.

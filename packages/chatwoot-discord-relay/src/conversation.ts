@@ -42,15 +42,7 @@ const payloadSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("sync"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("conversation"), accountId: id, conversationId: id }),
   z.object({ type: z.literal("message-updated"), accountId: id, conversationId: id, messageId: id }),
-  z.object({
-    type: z.literal("answer"),
-    accountId: id,
-    conversationId: id,
-    answerId: z.string(),
-    replyTo: z.string(),
-    /** Whether the answer has a draft; unset in jobs queued before 0.46, whose answers all had one. */
-    drafted: z.boolean().optional(),
-  }),
+  z.object({ type: z.literal("answer"), accountId: id, conversationId: id, answerId: z.string(), replyTo: z.string() }),
 ]);
 type JobPayload = z.infer<typeof payloadSchema>;
 
@@ -148,17 +140,15 @@ export class Conversation extends DurableObject<Env> {
   }
 
   /**
-   * The triage bot's answer `answerId` to message `replyTo` is in the post, with the reply draft it proposes, if any:
-   * the draft is kept for Reply with draft, and the post's card offers it under the answer (Relay.answered). Either
-   * way the bot is done, so a call owed meanwhile may follow. Each answer is taken once, so a repeated call adds
-   * nothing.
+   * The triage bot's answer `answerId` to message `replyTo` is in the post, with the reply draft it proposes: the
+   * draft is kept for Reply with draft, and the post's card offers it under the answer (Relay.answered).
+   * Each answer is taken once, so a repeated call adds nothing.
    */
-  async triageAnswered(answer: { threadId: string; answerId: string; replyTo: string; draft?: string | undefined }) {
+  async triageAnswered(answer: { threadId: string; answerId: string; replyTo: string; draft: string }): Promise<void> {
     const ticket = this.store.ticketForThread(answer.threadId);
     if (!ticket || this.store.get(answerKey(answer.answerId)) !== undefined) return;
-    this.store.set(answerKey(answer.answerId), answer.draft ?? "", ANSWER_TTL_MS);
-    const { answerId, replyTo } = answer;
-    this.enqueue({ type: "answer", ...ticket, answerId, replyTo, drafted: answer.draft !== undefined });
+    this.store.set(answerKey(answer.answerId), answer.draft, ANSWER_TTL_MS);
+    this.enqueue({ type: "answer", ...ticket, answerId: answer.answerId, replyTo: answer.replyTo });
     await this.schedule();
   }
 
@@ -225,7 +215,7 @@ export class Conversation extends DurableObject<Env> {
             this.store.delete(HELD_KEY);
             await this.releaseThread(payload.accountId, payload.conversationId);
             this.store.completeJob(job);
-            // A waiting announcement or triage call runs on its own once it is due.
+            // An announcement waiting for Chatwoot's assignment line runs on its own once its notice is due.
             const wake = services.relay.wakeAt(payload.accountId, payload.conversationId);
             if (wake !== undefined) this.enqueue(payload, wake);
           }
@@ -237,13 +227,7 @@ export class Conversation extends DurableObject<Env> {
           return "done";
         case "answer":
           // The card moves under the answer when the conversation's post is synced next.
-          services.relay.answered(
-            payload.accountId,
-            payload.conversationId,
-            payload.answerId,
-            payload.replyTo,
-            payload.drafted ?? true,
-          );
+          services.relay.answered(payload.accountId, payload.conversationId, payload.answerId, payload.replyTo);
           this.store.completeJob(job);
           this.enqueue({ type: "conversation", accountId: payload.accountId, conversationId: payload.conversationId });
           return "done";
