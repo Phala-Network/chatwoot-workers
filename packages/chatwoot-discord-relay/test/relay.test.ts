@@ -776,6 +776,42 @@ describe("Relay", () => {
   });
 });
 
+describe("the post header", () => {
+  it("lists the customer's latest earlier tickets, linked to their posts or else to Chatwoot", async () => {
+    const tickets = [12, 11, 10, 9, 8, 7, 6].map((id) => ({
+      id,
+      status: id === 12 ? "open" : "resolved",
+      postUrl: id === 10 ? undefined : `https://discord.com/channels/1/${id}`,
+    }));
+    const asked: Array<[number, number]> = [];
+    const { relay, forum } = relayWith({
+      contactTickets: async (accountId, contactId) => {
+        asked.push([accountId, contactId]);
+        return tickets;
+      },
+    });
+    await relay.relay(message({ conversation: { contact: { id: 40, name: "Jane Doe", email: "jane@example.com" } } }));
+    expect(asked).toEqual([[3, 40]]);
+    expect(forum.calls[0]?.[1].content).toContain(
+      "-# Earlier tickets: [#11](<https://discord.com/channels/1/11>) resolved · " +
+        "[#10](<https://chatwoot.example.com/app/accounts/3/conversations/10>) resolved · " +
+        "[#9](<https://discord.com/channels/1/9>) resolved · [#8](<https://discord.com/channels/1/8>) resolved · " +
+        "[#7](<https://discord.com/channels/1/7>) resolved\n",
+    );
+  });
+
+  it("is posted without them when the lookup fails", async () => {
+    const { relay, forum } = relayWith({
+      contactTickets: async () => {
+        throw new Error("Chatwoot is down");
+      },
+    });
+    await relay.relay(message({ conversation: { contact: { id: 40, name: "Jane Doe", email: "jane@example.com" } } }));
+    expect(forum.calls[0]?.[1].content).not.toContain("Earlier tickets");
+    expect(forum.calls.map(([, payload]) => payload.username)).toEqual(["Chatwoot", "Jane Doe"]);
+  });
+});
+
 describe("the card", () => {
   /** The card's status line, and its buttons' custom ids by row. */
   const shown = (payload: WebhookMessage | undefined) => {

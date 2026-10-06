@@ -398,6 +398,17 @@ export function chatwootClient(baseUrl: string, token: string, fetch: Fetch) {
     },
 
     /** The account's label names (Chatwoot saves them in lower case). */
+    /** The contact's latest 25 conversations, newest first, that this user may see. */
+    async contactConversations(accountId: number, contactId: number): Promise<ChatwootConversation[]> {
+      const list = await data(
+        "list contact conversations",
+        client.GET("/api/v1/accounts/{account_id}/contacts/{id}/conversations", {
+          params: { path: { account_id: accountId, id: contactId } },
+        }),
+      );
+      return list.payload ?? [];
+    },
+
     async listLabels(accountId: number): Promise<string[]> {
       const list = await data(
         "list labels",
@@ -516,6 +527,7 @@ export function toRelayConversation(conversationId: number, conversation: Chatwo
     priority: conversation.priority ?? null,
     labels: conversation.labels ?? [],
     contact: {
+      id: meta?.sender?.id ?? null,
       name: meta?.sender?.name ?? null,
       email: meta?.sender?.email ?? null,
       phone: meta?.sender?.phone_number ?? null,

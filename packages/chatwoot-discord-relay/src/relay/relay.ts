@@ -166,7 +166,22 @@ export interface RelayOptions {
    * Unset: always true.
    */
   claimThread?: ((accountId: number, conversationId: number, threadId: string) => Promise<boolean>) | undefined;
+  /**
+   * The contact's tickets in the account, newest first, with each one's post when it has one: a new post's header
+   * lists the earlier ones. Unset: none.
+   */
+  contactTickets?: ((accountId: number, contactId: number) => Promise<ContactTicket[]>) | undefined;
 }
+
+/** One of a contact's tickets: its display id, status, and post URL, if it has a post. */
+export interface ContactTicket {
+  id: number;
+  status: string | undefined;
+  postUrl: string | undefined;
+}
+
+/** How many of a contact's earlier tickets a new post's header lists. */
+const EARLIER_TICKETS = 5;
 
 /** A stored state that matches no conversation: the post's archived flag must be applied again. */
 const OUT_OF_DATE = "";
@@ -527,7 +542,7 @@ export class Relay {
     const conversation = message.conversation;
     const target = this.options.target(accountId);
     const link = conversationUrl(frontendUrl, accountId, conversation.id);
-    const header = postHeader(message);
+    const header = postHeader(message, await this.earlierTickets(accountId, conversation));
     const subject = titleSubject(message);
     const title = threadTitle(target.name, conversation, subject);
     const post: WebhookMessage = {
@@ -652,6 +667,26 @@ export class Relay {
       message.sender.id === botId &&
       message.content.trim() !== ""
     );
+  }
+
+  /**
+   * The customer's latest earlier tickets, as header links: to their posts, else to Chatwoot. A failed lookup leaves
+   * them out; it never holds up the post.
+   */
+  private async earlierTickets(accountId: number, conversation: RelayConversation): Promise<string[]> {
+    const { contactTickets, frontendUrl } = this.options;
+    const contactId = conversation.contact.id;
+    if (!contactTickets || !contactId) return [];
+    try {
+      const tickets = (await contactTickets(accountId, contactId)).filter((ticket) => ticket.id !== conversation.id);
+      return tickets.slice(0, EARLIER_TICKETS).map((ticket) => {
+        const url = ticket.postUrl ?? conversationUrl(frontendUrl, accountId, ticket.id);
+        return `[#${ticket.id}](<${url}>)${ticket.status ? ` ${ticket.status}` : ""}`;
+      });
+    } catch (error) {
+      log.warn("earlier tickets unavailable", { accountId, conversationId: conversation.id, ...errorFields(error) });
+      return [];
+    }
   }
 
   /** A message from Chatwoot itself. */

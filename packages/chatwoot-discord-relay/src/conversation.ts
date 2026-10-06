@@ -298,8 +298,22 @@ export class Conversation extends DurableObject<Env> {
     const forum = new DiscordForum(rest, this.store);
     const claimThread = (accountId: number, conversationId: number, threadId: string) =>
       this.claimThread(accountId, conversationId, threadId);
+    const link = settings.config.relay.linkAttribute;
     const relay = relayFor(settings, forum, this.store, {
       claimThread,
+      contactTickets: async (accountId, contactId) =>
+        (await chatwoot.contactConversations(accountId, contactId)).flatMap((ticket) => {
+          const postUrl = link ? ticket.custom_attributes?.[link] : undefined;
+          return ticket.id === undefined
+            ? []
+            : [
+                {
+                  id: ticket.id,
+                  status: ticket.status,
+                  postUrl: typeof postUrl === "string" && postUrl.startsWith("https://") ? postUrl : undefined,
+                },
+              ];
+        }),
       reserveTriage: (hour, event) => hub(this.env).reserveTriage(hour, event, settings.config.triage.perHour),
     });
     return { settings, store: this.store, relay, forum, chatwoot, budget, rest, claimThread };

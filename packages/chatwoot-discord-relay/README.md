@@ -72,7 +72,7 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
 ```
 
 - **One post per conversation.** Its title is `[<Account> #<id>] <customer> — <subject or first message>`. It
-  opens with a ticket header (channel, inbox, customer contact, "Open in Chatwoot"), every message follows under
+  opens with a ticket header (channel, inbox, customer contact, the customer's earlier tickets, "Open in Chatwoot"), every message follows under
   its sender's name (customers, agents, 🔒 private notes, activity lines), and it ends with the ticket's card:
   status, assignee and labels, how long the customer has waited for a reply and, when snoozed until a time, when it wakes, with buttons. Forum tags follow the conversation (account, status, assignee,
   topic, priority, labels); resolved posts are archived. [How conversations are relayed](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/relay.md) has the details.
@@ -340,7 +340,7 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `relay.linkAttribute` | string | `discord_thread` | Conversation custom attribute that receives the post URL (`""` disables it). |
 | `relay.startAfterMessageId` | integer ≥ 0 | `0` | Messages with an id at or below this are never relayed (cutover watermark, see [Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md)). |
 | `relay.maxAttempts` | integer ≥ 1 | `5` | Attempts before a message Discord refuses as invalid is skipped with a notice. |
-| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 31 | `45` | Outbound requests per alarm invocation (Free plan limit: 50). The minimum fits a run's setup and one message's worst case (`src/relay/limits.ts`). |
+| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 32 | `45` | Outbound requests per alarm invocation (Free plan limit: 50). The minimum fits a run's setup and one message's worst case (`src/relay/limits.ts`). |
 | `avatars.chatwoot` | https URL | `<publicUrl>/favicon-512x512.png` | Avatar of activity lines, cards, notices, agent bots without an https Chatwoot avatar, and agents with neither a linked Discord user nor an https Chatwoot avatar. |
 | `avatars.contact` | https URL | Gravatar "mystery person" | Avatar of customers without an https avatar in Chatwoot. |
 | `queue` | object | unset | The hourly [support queue](#support-queue). Unset: off. Requires `relay.subrequestBudget` ≥ 6 × accounts + 4. |
@@ -447,7 +447,7 @@ See [SECURITY.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/SE
 | Free plan limit | How this service stays within it |
 |---|---|
 | 10 ms CPU per Worker request | The Worker verifies a signature, parses JSON, and makes one Durable Object call. Bodies over 2 MB are rejected; a very large webhook that fails is relayed by the next sweep. |
-| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 26 requests remain (its parts, 14 for everything else a message may need, and 12 to finish the run), so the budget must be at least `relay.maxChunks` + 31 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
+| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 27 requests remain (its parts, 15 for everything else a message may need, and 12 to finish the run), so the budget must be at least `relay.maxChunks` + 32 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
 | 128 MB memory | Attachments are capped at 25 MB each / 50 MB per command. |
 | 100,000 Worker requests/day | See the estimate below. |
 | Durable Objects (SQLite): 100,000 requests/day, 100,000 rows written/day | See the estimate below. |
