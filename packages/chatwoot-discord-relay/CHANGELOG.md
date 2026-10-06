@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-10-06
+
+### Fixed
+
+- The card offers a draft until a public reply is sent after it, not only while the customer waits for a reply. A
+  follow-up draft a teammate asked for after replying (the customer no longer waiting) showed Write reply only.
+
 ## [0.44.0] - 2026-10-05
 
 ### Added
@@ -879,7 +886,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.1...HEAD
+[0.44.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.0...chatwoot-discord-relay@0.44.1
 [0.44.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.1...chatwoot-discord-relay@0.44.0
 [0.43.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.0...chatwoot-discord-relay@0.43.1
 [0.43.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.42.0...chatwoot-discord-relay@0.43.0

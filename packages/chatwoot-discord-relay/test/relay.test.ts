@@ -924,7 +924,7 @@ describe("the card", () => {
     expect(forum.deleted).toEqual([first]);
     expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual([`ticket:draft:${answer}`, "ticket:reply"]);
 
-    // A reply was sent (Chatwoot no longer counts the customer as waiting): the draft is used.
+    // A reply was sent after the answer: the draft is used.
     await relay.relay(
       message({ id: 2, messageType: "outgoing", answers: true, sender: { name: "Kim", type: "user" } }),
     );
@@ -934,6 +934,21 @@ describe("the card", () => {
     await relay.relay(message({ id: 3 }));
     await relay.sync(3, conversation, "thread-1");
     expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual(["ticket:reply"]);
+  });
+
+  it("offers a follow-up draft asked for after a reply, though the customer no longer waits", async () => {
+    const { relay, forum } = relayWith({ card: ticketCard });
+    const conversation = { ...message().conversation, waitingSince: null };
+    await relay.relay(message());
+    // A teammate replied, then asks the bot for a follow-up: its answer comes after the reply.
+    await relay.relay(
+      message({ id: 2, messageType: "outgoing", answers: true, sender: { name: "Kim", type: "user" } }),
+    );
+    const request = snowflake();
+    const answer = snowflake();
+    relay.answered(3, 12, answer, request);
+    await relay.sync(3, conversation, "thread-1");
+    expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual([`ticket:draft:${answer}`, "ticket:reply"]);
   });
 
   it("is posted again when someone deleted it, and changed in a resolved post before it is archived again", async () => {
