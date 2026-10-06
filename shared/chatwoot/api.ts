@@ -554,6 +554,7 @@ export function toRelayMessage(
     items: ITEM_CONTENT_TYPES.has(message.content_type ?? "") ? toRelayItems(message.content_attributes?.items) : [],
     sender: message.sender
       ? {
+          id: message.sender.id,
           name: message.sender.name,
           email: message.sender.email,
           type: message.sender.type,

@@ -62,6 +62,7 @@ describe("ticket menus", () => {
         labels: [],
         waitingSince,
         snoozedUntil,
+        note: null,
       });
       const summary = card?.type === ComponentType.Container ? card.components[0] : undefined;
       return summary?.type === ComponentType.TextDisplay ? summary.content : "";
@@ -85,7 +86,10 @@ describe("ticket menus", () => {
       labels,
       waitingSince: null,
       snoozedUntil: null,
+      note: "n".repeat(5000),
     });
+    const note = card?.type === ComponentType.Container ? card.components[1] : undefined;
+    expect(note?.type === ComponentType.TextDisplay && note.content.length).toBe(2000);
     const summary = card?.type === ComponentType.Container ? card.components[0] : undefined;
     const content = summary?.type === ComponentType.TextDisplay ? summary.content : "";
     expect(content.length).toBeLessThan(800);

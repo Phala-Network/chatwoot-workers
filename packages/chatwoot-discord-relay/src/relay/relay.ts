@@ -108,6 +108,8 @@ export interface PostFields {
   answerSourceId: string;
   /** The first Discord message of the customer's latest message (or response) in the post. */
   customerMessageId: string;
+  /** The latest private note by the account's cardNoteBotId, which the card shows. */
+  cardNote: string;
 }
 
 export interface RelayStore {
@@ -137,6 +139,8 @@ interface AccountTarget {
   name: string;
   /** The forum's tag ids by what they stand for (see tagKeys). */
   tags: Readonly<Record<string, string>>;
+  /** The agent bot whose latest private note the card shows (see cardNote). */
+  cardNoteBotId?: number | undefined;
 }
 
 export interface RelayOptions {
@@ -235,6 +239,9 @@ export class Relay {
       await this.post(message, parts, threadId);
     }
     this.unarchived(accountId, conversation);
+    if (this.isCardNote(message)) {
+      store.updateConversation(accountId, conversation.id, { cardNote: message.content.trim() });
+    }
     if (this.notifier.notifies(message)) store.updateConversation(accountId, conversation.id, { announcePending: 1 });
     if (this.notifier.callsTriage(message)) {
       store.updateConversation(accountId, conversation.id, { triageMessageId: message.id, triageAnswered: 0 });
@@ -632,6 +639,21 @@ export class Relay {
     store.updateConversation(accountId, conversationId, { cardId: messageId, cardCovered: 0 });
   }
 
+  /**
+   * A private note by the account's cardNoteBotId: a service's own record about the ticket, such as what it knows
+   * of the customer, which the card keeps in view. Messages are relayed in order, so the latest one stays.
+   */
+  private isCardNote(message: RelayMessage): boolean {
+    const botId = this.options.target(message.account.id).cardNoteBotId;
+    return (
+      botId !== undefined &&
+      message.private &&
+      message.sender?.type === "agent_bot" &&
+      message.sender.id === botId &&
+      message.content.trim() !== ""
+    );
+  }
+
   /** A message from Chatwoot itself. */
   private notice(content: string): WebhookMessage {
     return {
@@ -660,6 +682,7 @@ export class Relay {
       labels: conversation.labels,
       waitingSince: conversation.status === "resolved" ? null : (conversation.waitingSince ?? null),
       snoozedUntil: conversation.snoozedUntil ?? null,
+      note: this.options.store.conversation(accountId, conversation.id)?.cardNote || null,
     };
   }
 

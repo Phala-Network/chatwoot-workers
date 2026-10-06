@@ -76,6 +76,8 @@ export interface RelayMessage {
   discordAvatarUrl?: string;
   sender?:
     | {
+        /** The Chatwoot id of the contact, user, or agent bot (see `type`). */
+        id?: number | null | undefined;
         name?: string | null | undefined;
         email?: string | null | undefined;
         type?: string | null | undefined;

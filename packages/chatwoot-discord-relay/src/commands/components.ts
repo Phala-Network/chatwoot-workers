@@ -55,6 +55,8 @@ const MAX_BUTTON_TEXT = 80;
 /** What a card's summary shows at most: the labels, and the characters of a name or label. */
 const CARD_LABELS = 5;
 const CARD_TEXT = 60;
+/** Room for a note within a Components V2 message's 4,000 characters of text, with the card's own. */
+const CARD_NOTE = 2000;
 
 type Style = ButtonStyle.Primary | ButtonStyle.Secondary | ButtonStyle.Danger;
 
@@ -104,6 +106,8 @@ export interface CardTicket {
   waitingSince: number | null;
   /** Unix seconds when a snoozed ticket reopens; null when it is not snoozed or waits for the next reply. */
   snoozedUntil: number | null;
+  /** The latest note of the account's card note bot (Markdown); null for none. */
+  note: string | null;
 }
 
 /** A card's accent: the ticket's status at a glance. */
@@ -162,6 +166,7 @@ export function ticketCard(ticket: CardTicket, answerId?: string): APIMessageTop
       accent_color: STATUS_COLORS[ticket.status] ?? null,
       components: [
         { type: ComponentType.TextDisplay, content: `${heading}\n-# ${details}\n${summary}` },
+        ...(ticket.note ? [{ type: ComponentType.TextDisplay, content: clip(ticket.note, CARD_NOTE) } as const] : []),
         row(
           answerId
             ? [

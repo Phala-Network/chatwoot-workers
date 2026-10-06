@@ -45,6 +45,8 @@ export const configSchema = z
           forumChannelId: snowflake,
           /** Relay only conversations of these inboxes. Unset: every inbox. */
           inboxIds: z.array(z.number().int().positive()).min(1).optional(),
+          /** The card also shows the latest private note by this agent bot of the account. Unset: none. */
+          cardNoteBotId: z.number().int().positive().optional(),
         }),
       )
       .min(1)
