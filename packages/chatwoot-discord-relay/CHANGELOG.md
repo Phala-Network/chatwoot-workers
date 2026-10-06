@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-05
+
+### Added
+
+- A new post's header lists the customer's 5 latest earlier tickets in the account, `Earlier tickets: #12 resolved
+  · #8 resolved`. Each is linked to its post, or to Chatwoot when it has none. They come from the contact's
+  conversations (one request when the post is created); a failed lookup leaves them out and does not hold up the post.
+  The minimum `relay.subrequestBudget` is `relay.maxChunks` + 32.
+
 ## [0.43.1] - 2026-10-05
 
 ### Fixed
@@ -870,7 +879,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.1...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.0...HEAD
+[0.44.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.1...chatwoot-discord-relay@0.44.0
 [0.43.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.0...chatwoot-discord-relay@0.43.1
 [0.43.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.42.0...chatwoot-discord-relay@0.43.0
 [0.42.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.2...chatwoot-discord-relay@0.42.0

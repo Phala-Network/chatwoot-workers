@@ -37,6 +37,8 @@ export interface RelayConversation {
   priority?: string | null;
   labels: string[];
   contact: {
+    /** The contact's Chatwoot id. */
+    id?: number | null;
     name?: string | null;
     email?: string | null;
     phone?: string | null;

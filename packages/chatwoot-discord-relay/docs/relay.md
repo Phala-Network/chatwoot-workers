@@ -9,7 +9,8 @@ What the relay posts in a ticket's forum post, and how it handles the less commo
   `accounts[].inboxIds` when it is set. Messages from blocked contacts are not relayed.
 - Each conversation gets one forum post, titled `[<Account> #<id>] <customer> — <subject or first
   message>`. It opens with a ticket header (channel, inbox, customer email, phone number on phone
-  channels, "Open in Chatwoot" link), and every message follows it. Bots act on a post's replies
+  channels, the customer's 5 latest earlier tickets in the account, each linked to its post or else to Chatwoot,
+  "Open in Chatwoot" link), and every message follows it. Bots act on a post's replies
   but not on its opening message, so the header lets the first customer message reach a triage
   bot like any other.
 - Messages are posted through the forum webhook, so each shows its sender's name and avatar:

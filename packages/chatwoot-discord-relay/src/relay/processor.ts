@@ -29,7 +29,7 @@ const AVATAR_CACHE_MS = 24 * 60 * 60 * 1000;
 const AVATAR_RETRY_MS = 60 * 60 * 1000;
 
 /** What the conversations share: the hourly triage budget and which conversation each post belongs to. */
-export type Shared = Pick<RelayOptions, "reserveTriage" | "claimThread">;
+export type Shared = Pick<RelayOptions, "reserveTriage" | "claimThread" | "contactTickets">;
 
 /** The relay as configured by `settings`. */
 export function relayFor(settings: Settings, forum: ForumClient, store: RelayStore, shared: Shared = {}): Relay {

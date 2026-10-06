@@ -14,12 +14,12 @@ export const PAGE_REQUESTS = 1;
 
 /**
  * One message besides its parts: the linked sender's Discord avatar; for a new post, the inbox
- * name, the forum's tags, the bot's application id, the webhook's lookup, creation and lookup again, the
- * ticket header, and the header again with the tags looked up again; a failed attempt into a post
+ * name, the customer's earlier tickets, the forum's tags, the bot's application id, the webhook's lookup, creation and
+ * lookup again, the ticket header, and the header again with the tags looked up again; a failed attempt into a post
  * deleted in Discord; the truncation note; the notice when the message is skipped; and what its
  * state adds (a customer's response or a delivery failure, see relay/updates.ts).
  */
-const MESSAGE_REQUESTS = 14;
+const MESSAGE_REQUESTS = 15;
 
 /**
  * After the messages: the notice that pings a new assignee and adding them to the post; linking

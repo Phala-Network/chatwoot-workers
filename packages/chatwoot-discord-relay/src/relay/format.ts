@@ -127,12 +127,13 @@ export function threadTitle(accountName: string, conversation: RelayConversation
  * Context shown once, at the top of a new post: channel, inbox, and the customer's email, and
  * their phone number on channels that reach them by phone.
  */
-export function postHeader(message: RelayMessage): string {
+export function postHeader(message: RelayMessage, earlierTickets: string[] = []): string {
   const channel = channelName(message.conversation);
   const inbox = filled(message.inboxName);
   const lines: string[] = [];
   if (channel || inbox) lines.push(`-# via ${[channel, inbox].filter(Boolean).join(" · ")}`);
   for (const detail of contactDetails(message.conversation)) lines.push(`-# ${detail}`);
+  if (earlierTickets.length) lines.push(`-# Earlier tickets: ${earlierTickets.join(" · ")}`);
   return lines.join("\n");
 }
 
