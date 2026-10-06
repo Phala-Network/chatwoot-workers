@@ -43,16 +43,12 @@ const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
 const HANDLED =
   "-# Triage bot not called: the customer was answered, or the ticket is not open. Ask it here if needed.";
 
-/**
- * What the processor does in a run: relay its messages, then decide the triage bot's call and make it last. The bot
- * answers the call (its hook reports the answer, without a draft) before the next run.
- */
+/** What the processor does in a run: relay its messages, then decide the triage bot's call and make it last. */
 async function inRun(relay: Relay, ...messages: RelayMessage[]): Promise<void> {
   for (const relayed of messages) await relay.relay(relayed);
   const last = messages.at(-1);
   if (last && (await relay.triage(last.account.id, last.conversation))) {
     await relay.callTriage(last.account.id, last.conversation);
-    relay.answered(last.account.id, last.conversation.id, snowflake(), String(last.id), false);
   }
 }
 /**
@@ -375,35 +371,6 @@ describe("Relay", () => {
     expect(forum.contents().slice(1)).toEqual(["My agent will not connect", HANDLED]);
   });
 
-  it("calls the triage bot one call at a time: a call owed meanwhile follows its answer, or a lost answer", async () => {
-    let now = NOW.getTime();
-    let store: MemoryStore;
-    ({ relay, forum, store } = relayWith({ triage, now: () => new Date(now) }));
-    const { conversation } = message();
-    await relay.relay(message({ content: "first" }));
-    expect(await relay.triage(3, conversation)).toBe(true);
-    await relay.callTriage(3, conversation);
-    expect(relay.wakeAt(3, 12)).toBeUndefined();
-
-    // While the bot answers, a call into it would interrupt it: the next one stays owed.
-    await relay.relay(message({ id: 102, content: "second" }));
-    expect(await relay.triage(3, conversation)).toBe(false);
-    expect(relay.wakeAt(3, 12)).toBe(now + 5 * 60 * 1000);
-    // Its answer, without a draft, frees it, and offers nothing on the card.
-    relay.answered(3, 12, snowflake(), "101", false);
-    expect(store.conversation(3, 12)?.answerId).toBeUndefined();
-    expect(await relay.triage(3, conversation)).toBe(true);
-    await relay.callTriage(3, conversation);
-
-    // A lost answer frees it after 5 minutes.
-    await relay.relay(message({ id: 103, content: "third" }));
-    expect(await relay.triage(3, conversation)).toBe(false);
-    now += 5 * 60 * 1000;
-    expect(await relay.triage(3, conversation)).toBe(true);
-    await relay.callTriage(3, conversation);
-    expect(forum.contents().slice(1)).toEqual(["first", CALL, "second", CALL, "third", CALL]);
-  });
-
   it("calls the triage bot within its hourly budgets, counting calls", async () => {
     ({ relay, forum, tick } = relayWith({ triage }));
     for (let i = 0; i < 7; i += 1) await inRun(relay, message({ id: 200 + i, content: `msg ${i}` }));
@@ -430,7 +397,6 @@ describe("Relay", () => {
     expect(await relay.triage(3, first.conversation)).toBe(true);
     await relay.callTriage(3, first.conversation);
     await relay.callTriage(3, first.conversation);
-    relay.answered(3, 12, snowflake(), "101", false);
     await inRun(relay, message({ id: 102, content: "second" }));
     await inRun(relay, message({ id: 103, content: "third" }));
     expect(forum.contents().slice(1)).toEqual([
@@ -753,7 +719,6 @@ describe("Relay", () => {
     expect(await relay.triage(3, current)).toBe(true);
     await relay.announceAssignee(3, current);
     await relay.callTriage(3, current);
-    relay.answered(3, 12, snowflake(), "103", false);
     expect(forum.contents().at(-1)).toBe(CALL);
     tick(ASSIGNMENT_WAIT);
     await relay.announceAssignee(3, current);

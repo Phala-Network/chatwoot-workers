@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-06
+
+### Changed
+
+- The triage bot is called for every live customer message again, as before 0.46: an agent that takes a newer
+  message into the turn it runs (Hermes redirects its run, and answers the latest message once) is not held back
+  until it reports. The hook again reports only answers with a draft; a report without one is refused, as before
+  0.46. The 0.46 column for a call in flight is dropped.
+
 ## [0.46.0] - 2026-10-06
 
 ### Changed

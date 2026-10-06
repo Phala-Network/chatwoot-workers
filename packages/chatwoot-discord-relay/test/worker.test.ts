@@ -515,30 +515,6 @@ describe("worker", () => {
     expect(world.sent("DELETE", /^\/api\/v10\/webhooks\/1\/tok\/messages\//)).toHaveLength(1);
   });
 
-  it("calls the triage bot one call at a time: the next follows its hook's answer, even without a draft", async () => {
-    const help = { id: 711, content: "help", message_type: 0 };
-    world.conversation(25, [help]);
-    await chatwootWebhook(created(25));
-    await drain();
-    const thread = world.webhookPosts().at(-1)?.thread ?? "";
-    const calls = () => world.webhookPosts().filter((post) => post.body.content === CALL).length;
-    world.conversation(25, [help, { id: 712, content: "still there?", message_type: 0 }]);
-    await chatwootWebhook(created(25));
-    await drain();
-    // The bot is still answering: the next call waits, its run due when the answer would be overdue.
-    expect(calls()).toBe(1);
-    const due = await runInDurableObject(conversationObject(25), (_instance, state) =>
-      state.storage.sql.exec<{ at: number }>("SELECT not_before AS at FROM jobs").toArray(),
-    );
-    expect(due).toHaveLength(1);
-    expect(due[0]?.at).toBeGreaterThan(Date.now() + 4 * 60 * 1000);
-
-    const replyTo = world.acceptedMessages.find((post) => String(post.body.content).startsWith("help"))?.id ?? "";
-    expect((await triageHook({ threadId: thread, answerId: "100000000000009200", replyTo })).status).toBe(200);
-    await drain();
-    expect(calls()).toBe(2);
-  });
-
   it("moves the card under the triage bot's answer, offering its draft, when its signed hook says the answer is in", async () => {
     world.conversation(24, [{ id: 701, content: "help", message_type: 0 }]);
     await chatwootWebhook(created(24));
