@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-10-06
+
+### Changed
+
+- A new post's customer context is looked up while the post is created, not after: the customer's first message no
+  longer waits for the lookup (about 2 s when the email is unknown to a slow product).
+
 ## [0.41.0] - 2026-10-05
 
 ### Added
@@ -828,7 +835,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.1...HEAD
+[0.41.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.41.0...chatwoot-discord-relay@0.41.1
 [0.41.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.2...chatwoot-discord-relay@0.41.0
 [0.40.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.1...chatwoot-discord-relay@0.40.2
 [0.40.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.40.0...chatwoot-discord-relay@0.40.1

@@ -4,7 +4,6 @@
 // conversation.
 
 import { MessageFlags, type RESTPostAPIWebhookWithTokenJSONBody } from "discord-api-types/v10";
-import { BudgetExhaustedError } from "../../../../shared/budget.ts";
 import { errorFields, log } from "../../../../shared/log.ts";
 import type { LinkedAgent, RelayConversation, RelayMessage } from "../../../../shared/types.ts";
 import type { CardTicket } from "../commands/components.ts";
@@ -247,9 +246,10 @@ export class Relay {
       }
     }
     if (!threadId) {
+      // Looked up while the post is created, and shown under its header, before the customer's first message.
+      const context = this.lookUpContext(accountId, conversation);
       threadId = await this.createPost(message);
-      // Right under the header, before the customer's first message.
-      await this.customerContext(accountId, conversation, threadId);
+      await this.showContext(accountId, conversation, threadId, await context);
       await this.post(message, parts, threadId);
     }
     this.unarchived(accountId, conversation);
@@ -279,40 +279,57 @@ export class Relay {
   }
 
   /**
-   * The post's customer context message (RelayOptions.customerContext): looked up when the post is created, and
+   * The post's customer context message (RelayOptions.customerContext): looked up while the post is created, and
    * again once the customer wrote since, at most every CONTEXT_REFRESH_MS; posted once, then edited in place. A
    * lookup that fails or finds nothing leaves the message as it is; a later run tries again.
    */
   async customerContext(accountId: number, conversation: RelayConversation, threadId: string): Promise<void> {
-    const lookup = this.options.customerContext;
-    if (!lookup) return;
-    const { store, forum } = this.options;
-    const recorded = store.conversation(accountId, conversation.id);
-    const latest = recorded?.customerMessageId ?? "";
+    if (!this.options.customerContext) return;
+    const recorded = this.options.store.conversation(accountId, conversation.id);
     const now = (this.options.now?.() ?? new Date()).getTime();
     if (
       recorded?.contextMessageId &&
-      (recorded.contextFor === latest || now - (recorded.contextCheckedAt ?? 0) < CONTEXT_REFRESH_MS)
+      (recorded.contextFor === (recorded.customerMessageId ?? "") ||
+        now - (recorded.contextCheckedAt ?? 0) < CONTEXT_REFRESH_MS)
     ) {
       return;
     }
-    store.updateConversation(accountId, conversation.id, { contextCheckedAt: now, contextFor: latest });
-    let markdown: string | undefined;
+    await this.showContext(accountId, conversation, threadId, await this.lookUpContext(accountId, conversation));
+  }
+
+  /** The customer's context, or undefined when there is none or it could not be looked up; never throws. */
+  private async lookUpContext(accountId: number, conversation: RelayConversation): Promise<string | undefined> {
+    const lookup = this.options.customerContext;
+    if (!lookup) return undefined;
+    const { store } = this.options;
+    store.updateConversation(accountId, conversation.id, {
+      contextCheckedAt: (this.options.now?.() ?? new Date()).getTime(),
+      contextFor: store.conversation(accountId, conversation.id)?.customerMessageId ?? "",
+    });
     try {
-      markdown = await lookup(conversation.contact);
+      return await lookup(conversation.contact);
     } catch (error) {
-      if (error instanceof BudgetExhaustedError) throw error;
       log.warn("customer context unavailable", { accountId, conversationId: conversation.id, ...errorFields(error) });
-      return;
+      return undefined;
     }
+  }
+
+  /** Edits the post's customer context message to `markdown`, or posts it when there is none. */
+  private async showContext(
+    accountId: number,
+    conversation: RelayConversation,
+    threadId: string,
+    markdown: string | undefined,
+  ): Promise<void> {
     if (!markdown) return;
+    const { store, forum } = this.options;
     const message: WebhookMessage = {
       content: Array.from(markdown).slice(0, MESSAGE_LIMIT).join(""),
       username: SYSTEM_USERNAME,
       avatar_url: this.options.avatars.chatwoot,
       allowed_mentions: { parse: [] },
     };
-    const id = recorded?.contextMessageId;
+    const id = store.conversation(accountId, conversation.id)?.contextMessageId;
     if (id && (await forum.editMessage(this.forumOf(accountId), threadId, id, message))) return;
     const posted = await this.postMessage(accountId, conversation, message);
     if (posted !== undefined) store.updateConversation(accountId, conversation.id, { contextMessageId: posted });
