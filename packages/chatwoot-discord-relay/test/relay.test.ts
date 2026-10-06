@@ -906,9 +906,9 @@ describe("the card", () => {
     expect(store.conversation(3, 12)?.cardNote).toBe("**Customer accounts** after the reopen");
   });
 
-  it("offers the triage bot's draft under its answer, until it is sent or the customer writes again", async () => {
+  it("offers the triage bot's draft under its answer until it is used, whatever else is sent meanwhile", async () => {
     const { relay, forum } = relayWith({ card: ticketCard });
-    const conversation = { ...message().conversation, waitingSince: 1_790_000_000 };
+    const conversation = message().conversation;
     await relay.relay(message());
     await relay.sync(3, conversation, "thread-1");
     const first = forum.ids.at(-1);
@@ -924,14 +924,19 @@ describe("the card", () => {
     expect(forum.deleted).toEqual([first]);
     expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual([`ticket:draft:${answer}`, "ticket:reply"]);
 
-    // A reply was sent after the answer: the draft is used.
+    // A teammate's own reply, and the customer writing again, leave the draft for the team to judge.
     await relay.relay(
       message({ id: 2, messageType: "outgoing", answers: true, sender: { name: "Kim", type: "user" } }),
     );
-    await relay.sync(3, { ...conversation, waitingSince: null }, "thread-1");
-    expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual(["ticket:reply"]);
-
     await relay.relay(message({ id: 3 }));
+    await relay.sync(3, conversation, "thread-1");
+    expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual([`ticket:draft:${answer}`, "ticket:reply"]);
+
+    // A reply sent with it uses it.
+    relay.draftUsed(3, 12, answer);
+    await relay.relay(
+      message({ id: 4, messageType: "outgoing", answers: true, sender: { name: "Kim", type: "user" } }),
+    );
     await relay.sync(3, conversation, "thread-1");
     expect(shown(forum.calls.at(-1)?.[1])[1]).toEqual(["ticket:reply"]);
   });
@@ -1004,7 +1009,7 @@ describe("the card", () => {
     expect(forum.archived.has("thread-1")).toBe(true);
   });
 
-  it("offers only the latest draft that answers the customer's latest message, however receipts come", async () => {
+  it("offers the latest draft received for the customer's latest message, however receipts come, until it is used", async () => {
     const { relay, forum } = relayWith({ card: ticketCard });
     const conversation = { ...message().conversation, waitingSince: 1_790_000_000 };
     const draftOffered = () => shown(forum.calls.at(-1)?.[1])[1]?.[0];
@@ -1018,23 +1023,28 @@ describe("the card", () => {
     await relay.sync(3, conversation, "thread-1");
     expect(draftOffered()).toBe(`ticket:draft:${newer}`);
 
-    // The customer writes again, then an answer to their first message comes: it is behind them.
+    // The customer writes again, then another answer to their first message comes: it is behind them and ignored,
+    // and the draft not used yet stays offered.
     await relay.relay(message({ id: 2 }));
     relay.answered(3, 12, snowflake(), first);
     await relay.sync(3, conversation, "thread-1");
-    expect(draftOffered()).toBe("ticket:reply");
+    expect(draftOffered()).toBe(`ticket:draft:${newer}`);
 
     // A retry of the first message posts nothing, and does not take the customer's latest back.
     const second = latest();
     await relay.relay(message());
     expect(latest()).toBe(second);
 
-    // An answer to the latest message is offered; a response to a form puts it behind them again.
+    // An answer to the latest message replaces it, and stays offered after a response to a form, until it is used.
     const answer = snowflake();
     relay.answered(3, 12, answer, second);
     await relay.sync(3, conversation, "thread-1");
     expect(draftOffered()).toBe(`ticket:draft:${answer}`);
     await relay.postResponse(3, conversation, "• Rating: 5");
+    await relay.sync(3, conversation, "thread-1");
+    expect(draftOffered()).toBe(`ticket:draft:${answer}`);
+    relay.draftUsed(3, 12, answer);
+    await relay.postResponse(3, conversation, "• Rating: 4");
     await relay.sync(3, conversation, "thread-1");
     expect(draftOffered()).toBe("ticket:reply");
   });
@@ -1068,21 +1078,23 @@ describe("the card", () => {
     const long = `${"x".repeat(1900)}\n`.repeat(2);
     await relay.relay(message());
     const first = forum.ids[forum.calls.findLastIndex(([, payload]) => payload.username === "Jane Doe")] ?? "";
-    relay.answered(3, 12, snowflake(), first);
+    const toC1 = snowflake();
+    relay.answered(3, 12, toC1, first);
     await relay.sync(3, conversation, "thread-1");
 
-    // C2's first part is posted, its second fails: the answer to C1 is behind the customer now.
+    // C2's first part is posted, its second fails: the answer to C1, not used yet, stays offered.
     forum.failAfter = 1;
     await expect(relay.relay(message({ id: 2, content: long }))).rejects.toThrow();
     await relay.sync(3, conversation, "thread-1");
-    expect(draftOffered()).toBe("ticket:reply");
+    expect(draftOffered()).toBe(`ticket:draft:${toC1}`);
 
-    // A response comes, then C2's last part: an answer to that part answers C2, before the response.
+    // A response comes, then C2's last part: an answer to that part answers C2, which is behind the response
+    // (the customer's latest), so it is ignored and the answer to C1 stays.
     await relay.postResponse(3, conversation, "• Rating: 5");
     await relay.relay(message({ id: 2, content: long }));
     const lastPart = forum.ids.at(-1) ?? "";
     relay.answered(3, 12, snowflake(), lastPart);
     await relay.sync(3, conversation, "thread-1");
-    expect(draftOffered()).toBe("ticket:reply");
+    expect(draftOffered()).toBe(`ticket:draft:${toC1}`);
   });
 });

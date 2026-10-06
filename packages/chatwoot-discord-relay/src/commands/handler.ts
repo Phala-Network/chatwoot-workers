@@ -210,6 +210,7 @@ function message(
   content: string,
   files: AttachmentRef[],
   sendAsAgent = false,
+  draft?: string,
 ): HandlerResult {
   if (content === "" && files.length === 0) throw new UserError("Add a message or an attachment.");
   checkFiles(files, context.deps.settings);
@@ -219,12 +220,15 @@ function message(
     content,
     files,
     ...(sendAsAgent ? { sendAsAgent } : {}),
+    ...(draft ? { draft } : {}),
   });
 }
 
 function submit(context: Context, interaction: APIModalSubmitInteraction): HandlerResult {
-  const kind = interaction.data.custom_id.split(":", 1)[0];
+  const [kind, , opened] = interaction.data.custom_id.split(":");
   if (kind !== "reply" && kind !== "note") throw new UserError("Unknown form.");
+  // A reply that opened with a draft sends it, edited or not: the card stops offering it (see Relay.draftUsed).
+  const draft = kind === "reply" && opened && /^\d{17,20}$/.test(opened) ? opened : undefined;
 
   const inputs = interaction.data.components.flatMap((component) =>
     component.type === ComponentType.Label ? [component.component] : [],
@@ -236,7 +240,7 @@ function submit(context: Context, interaction: APIModalSubmitInteraction): Handl
   const from = input("from");
   const content = text?.type === ComponentType.TextInput ? text.value.trim() : "";
   const files = uploadedFiles(interaction, upload?.type === ComponentType.FileUpload ? upload.values : []);
-  return message(context, kind, content, files, from?.type === ComponentType.Checkbox && from.value);
+  return message(context, kind, content, files, from?.type === ComponentType.Checkbox && from.value, draft);
 }
 
 /** Files from the editor's upload field, as Discord describes them in the resolved data. */
@@ -272,7 +276,9 @@ function replyWithThis(context: Context, interaction: APIApplicationCommandInter
   if (draft === undefined || draft === "") {
     return privately("That message has no draft. Right-click the triage bot message that contains the draft.");
   }
-  return { response: editor(context, "reply", draft) };
+  // The target is the draft's message: replying with it uses the draft, if it is the triage bot's latest answer.
+  const target = interaction.data.type === ApplicationCommandType.Message ? interaction.data.target_id : "";
+  return { response: editor(context, "reply", draft, /^\d{17,20}$/.test(target) ? target : undefined) };
 }
 
 /**
@@ -296,7 +302,12 @@ function draftOf(context: Context, interaction: APIApplicationCommandInteraction
  * unsubmitted modal input per custom_id and would otherwise show text from an earlier, cancelled
  * editor instead of this draft.
  */
-function editor(context: Context, kind: "reply" | "note", value: string | undefined): APIModalInteractionResponse {
+function editor(
+  context: Context,
+  kind: "reply" | "note",
+  value: string | undefined,
+  draft?: string,
+): APIModalInteractionResponse {
   const nonce = context.interaction.id;
   const maxFiles = context.deps.settings.config.attachments.maxFiles;
   const label = kind === "note" ? "Private note" : "Message to the customer";
@@ -304,7 +315,8 @@ function editor(context: Context, kind: "reply" | "note", value: string | undefi
   return {
     type: InteractionResponseType.Modal,
     data: {
-      custom_id: `${kind}:${nonce}`,
+      // "<kind>:<nonce>", then the answer whose draft it opens with (see submit).
+      custom_id: draft ? `${kind}:${nonce}:${draft}` : `${kind}:${nonce}`,
       title: Array.from(title).slice(0, 45).join(""),
       components: [
         {
@@ -377,7 +389,7 @@ async function component(context: Context, interaction: APIMessageComponentInter
   const answerId = data.custom_id.startsWith(`${BUTTONS.draft}:`) ? data.custom_id.slice(BUTTONS.draft.length + 1) : "";
   if (/^\d{17,20}$/.test(answerId)) {
     const draft = await context.deps.draftOf(context.threadId, answerId);
-    if ("text" in draft) return { response: editor(context, "reply", draft.text) };
+    if ("text" in draft) return { response: editor(context, "reply", draft.text, answerId) };
     if (draft.missing === "none") return privately("That answer has no draft.");
     return privately(
       `That answer's draft cannot be read here (it needs Discord's Message Content intent, or Discord did not answer in time). Right-click [the answer](https://discord.com/channels/${interaction.guild_id ?? "@me"}/${context.threadId}/${answerId}) and choose Apps → ${REPLY_WITH_THIS}.`,

@@ -263,11 +263,14 @@ export class Conversation extends DurableObject<Env> {
     }
     if (Date.now() - queuedAt > SLOW_JOB_MS)
       log.warn("command waited", { interactionId: job.interactionId, ms: Date.now() - queuedAt });
-    const { content, components, conversationGone } = await executeCommand(
+    const { content, components, done, conversationGone } = await executeCommand(
       job,
       services.settings,
       services.budget.fetch,
     );
+    const { action } = job;
+    if (done && action.type === "message" && action.draft)
+      services.relay.draftUsed(accountId, conversationId, action.draft);
     // Chatwoot sends no webhook when a conversation is deleted: let its job close the post.
     if (conversationGone) this.enqueue({ type: "conversation", accountId, conversationId });
     else if (!READ_ONLY_ACTIONS.has(job.action.type)) this.enqueue({ type: "sync", accountId, conversationId });

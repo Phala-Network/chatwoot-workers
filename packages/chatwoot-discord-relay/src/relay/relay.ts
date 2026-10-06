@@ -263,12 +263,6 @@ export class Relay {
     } else if (message.answers && store.conversation(accountId, conversation.id)?.triageMessageId) {
       store.updateConversation(accountId, conversation.id, { triageAnswered: 1 });
     }
-    // A public reply sent after the bot's answer used its draft (or made it moot): the card stops offering it.
-    const answerId = store.conversation(accountId, conversation.id)?.answerId;
-    const sentAt = (message.createdAt ?? 0) * 1000 || (this.options.now?.() ?? new Date()).getTime();
-    if (message.answers && answerId && BigInt(sentAt) >= (BigInt(answerId) >> 22n) + DISCORD_EPOCH) {
-      store.updateConversation(accountId, conversation.id, { answerSourceId: "" });
-    }
   }
 
   /**
@@ -286,6 +280,14 @@ export class Relay {
       return;
     }
     store.updateConversation(accountId, conversationId, { answerId, answerSourceId: source, cardCovered: 1 });
+  }
+
+  /** A reply sent the draft of the triage bot's answer `answerId` (edited or not): the card stops offering it. */
+  draftUsed(accountId: number, conversationId: number, answerId: string): void {
+    const { store } = this.options;
+    if (store.conversation(accountId, conversationId)?.answerId !== answerId) return;
+    // The reply moves the card under it when it is relayed, without the draft.
+    store.updateConversation(accountId, conversationId, { answerSourceId: "" });
   }
 
   /**
@@ -361,10 +363,9 @@ export class Relay {
     const { store, forum } = this.options;
     const state = this.stateOf(conversation);
     const recorded = store.conversation(accountId, conversation.id);
-    // The triage bot's draft is offered while it answers the customer's latest message, or a teammate's request
-    // after it (a follow-up, a rewrite), until a public reply is sent after it (see relay).
-    const source = recorded?.answerSourceId;
-    const draft = source && answersLatest(source, recorded?.customerMessageId) ? recorded?.answerId : undefined;
+    // The triage bot's latest draft is offered until it is used (see draftUsed): a teammate decides whether a
+    // reply, or the customer's newer message, makes it moot.
+    const draft = recorded?.answerSourceId ? recorded.answerId : undefined;
     const card = this.options.card?.(this.cardTicket(accountId, conversation), draft);
     const cardDue =
       card !== undefined && (!recorded?.cardId || isUnknownCard(recorded.cardId) || recorded.cardCovered === 1);

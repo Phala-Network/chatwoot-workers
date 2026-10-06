@@ -42,6 +42,11 @@ const actionSchema = z.discriminatedUnion("type", [
     files: z.array(attachmentSchema),
     /** An email reply sent from the agent's own address (a Chatwoot build that reads it; see README). */
     sendAsAgent: z.boolean().optional(),
+    /** The triage bot's answer whose draft the reply opened with (Reply with draft, Reply with this). */
+    draft: z
+      .string()
+      .regex(/^\d{17,20}$/)
+      .optional(),
   }),
 ]);
 export type CommandAction = z.infer<typeof actionSchema>;
