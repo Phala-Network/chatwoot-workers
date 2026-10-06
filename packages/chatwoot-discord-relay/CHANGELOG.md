@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-06
+
+### Changed
+
+- The card offers the triage bot's latest draft until it is used: sent with **Reply with draft**, or with **Reply
+  with this** on its answer, edited or not. A teammate's own reply, or the customer writing again, no longer hides
+  it (0.44.1 hid it after any reply): whether it is moot is the team's call. Drafts recorded before 0.45 are taken
+  as used, since earlier versions did not record their use.
+
 ## [0.44.1] - 2026-10-06
 
 ### Fixed
@@ -886,7 +895,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.1...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.45.0...HEAD
+[0.45.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.1...chatwoot-discord-relay@0.45.0
 [0.44.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.0...chatwoot-discord-relay@0.44.1
 [0.44.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.1...chatwoot-discord-relay@0.44.0
 [0.43.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.0...chatwoot-discord-relay@0.43.1

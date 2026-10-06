@@ -108,6 +108,8 @@ const MIGRATIONS: string[] = [
    ALTER TABLE conversations DROP COLUMN context_for;`,
   // The latest private note by the account's card note bot, which the card shows.
   `ALTER TABLE conversations ADD COLUMN card_note TEXT;`,
+  // 0.45 offers a draft until it is used, which earlier versions did not record: their drafts are taken as used.
+  `UPDATE conversations SET answer_source_id = '' WHERE answer_source_id IS NOT NULL;`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;

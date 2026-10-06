@@ -268,8 +268,8 @@ bottom (posted again, the previous one deleted) when the relay posts messages or
 reports an answer, so a post has one card, under the latest of those (a message posted in
 Discord by anyone else does not move it). After a triage bot's answer with a draft, reported by
 the bot's [hook](#triage-bot-hook), the card moves under the answer and is led by **Reply with
-draft** until a public reply is sent after it or the customer writes again; a teammate's request
-for a follow-up or a rewrite gets one too. Buttons under older messages keep working, and the
+draft** until the draft is used (sent with **Reply with draft**, or **Reply with this** on its
+answer, edited or not); a teammate's request for a follow-up or a rewrite gets one too. Buttons under older messages keep working, and the
 commands work everywhere.
 
 | Command | Card button | Effect in Chatwoot |

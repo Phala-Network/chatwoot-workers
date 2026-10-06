@@ -27,6 +27,8 @@ interface CommandResult {
    * it is now (a Components V2 message; see respond in hub.ts).
    */
   components?: APIMessageTopLevelComponent[];
+  /** The action was carried out. */
+  done?: true;
   /** Chatwoot could not find the conversation: it may have been deleted. */
   conversationGone: boolean;
 }
@@ -192,10 +194,11 @@ export async function executeCommand(job: CommandJob, settings: Settings, fetch:
       return {
         content: message ? `✅ ${message}` : ticket,
         components: await drawPanel(chatwoot, accountId, conversationId, ticket, message, settings),
+        done: true,
         conversationGone: false,
       };
     }
-    return { content: `✅ ${message}`, conversationGone: false };
+    return { content: `✅ ${message}`, done: true, conversationGone: false };
   } catch (error) {
     const gone = error instanceof ConversationGoneError || (error instanceof ChatwootError && error.status === 404);
     return { content: failure(error, job), conversationGone: gone };

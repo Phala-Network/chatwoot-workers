@@ -67,11 +67,17 @@ function interaction(fields: {
   );
 }
 
-function submission(kind: string, text = "", files: Record<string, unknown> = {}, fromMe?: boolean) {
+function submission(
+  kind: string,
+  text = "",
+  files: Record<string, unknown> = {},
+  fromMe?: boolean,
+  customId = `${kind}:9001`,
+) {
   return interaction({
     type: 5,
     data: {
-      custom_id: `${kind}:9001`,
+      custom_id: customId,
       components: [
         { type: 18, component: { type: 4, custom_id: "content:9001", value: text } },
         { type: 18, component: { type: 19, custom_id: "files:9001", values: Object.keys(files) } },
@@ -290,6 +296,15 @@ describe("interaction handler", () => {
     expect((await handleInteraction(submission("reply", "Hi", {}, false), deps)).job?.action).not.toHaveProperty(
       "sendAsAgent",
     );
+  });
+
+  it("a reply opened with a draft carries its answer, so the card stops offering the draft once it is sent", async () => {
+    const { response } = await press(`ticket:draft:${ANSWER}`);
+    expect(response.type === InteractionResponseType.Modal && response.data.custom_id).toBe(`reply:777001:${ANSWER}`);
+    const sent = await handleInteraction(submission("reply", "Hi", {}, undefined, `reply:9001:${ANSWER}`), deps);
+    expect(sent.job?.action).toEqual({ type: "message", private: false, content: "Hi", files: [], draft: ANSWER });
+    const note = await handleInteraction(submission("note", "Hi", {}, undefined, `note:9001:${ANSWER}`), deps);
+    expect(note.job?.action).not.toHaveProperty("draft");
   });
 
   it("a note submission is private", async () => {
