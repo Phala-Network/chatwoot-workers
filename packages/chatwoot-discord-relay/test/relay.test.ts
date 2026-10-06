@@ -1021,9 +1021,14 @@ describe("the customer context", () => {
     return { ...setup, looked, later: (minutes: number) => (now = new Date(now.getTime() + minutes * 60_000)) };
   }
 
-  it("is shown under a new post's header, before the customer's first message", async () => {
-    const { relay, forum, looked } = withContext(async () => "**Customer** · Phala Cloud: no account");
+  it("is looked up while a new post is created, and shown under its header, before the customer's first message", async () => {
+    let postedWhenAsked = -1;
+    const { relay, forum, looked } = withContext(async () => {
+      postedWhenAsked = forum.calls.length;
+      return "**Customer** · Phala Cloud: no account";
+    });
     await relay.relay(message());
+    expect(postedWhenAsked).toBe(0); // asked before the post existed
     expect(looked).toEqual(["jane@example.com"]);
     expect(forum.calls.map(([, payload]) => payload.username)).toEqual(["Chatwoot", "Chatwoot", "Jane Doe"]);
     expect(forum.calls[1]?.[1]).toMatchObject({
