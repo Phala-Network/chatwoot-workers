@@ -44,7 +44,8 @@ says so: `-# Triage bot not called: the customer was answered, or the ticket is 
 The mention is a literal token in the message content; Discord sends no notification for it
 (the relay's `allowed_mentions` leaves it out), so nobody is pinged by it. Only customer
 messages call the agent. Agent replies, private notes, activity lines, the ticket header that
-opens a post, the post's card (the ticket's state and buttons, with no text content), and
+opens a post, the post's card (the ticket's state and buttons and, with `accounts[].cardNoteBotId`, that bot's latest
+note), and
 customers' responses to interactive messages (option picks, forms, CSAT ratings) do not. Neither
 do automatic email replies (out of office, for example), nor customer messages created more than
 `reconcile.lookbackSeconds` (an hour by default) before they are relayed: the history posted when
@@ -109,8 +110,8 @@ permissions apply, and an unassigned conversation is assigned to them.
 
 ## Optional: read-only context from Chatwoot
 
-The post is enough for most tickets, but an agent may read more (earlier conversations, contact
-details) from Chatwoot's API. Chatwoot access tokens are not scoped: any agent's token can also
+The post is enough for most tickets: its header lists the customer's earlier tickets, linked to their posts. An agent
+may read more (those conversations' messages, contact details) from Chatwoot's API. Chatwoot access tokens are not scoped: any agent's token can also
 send messages. Give the AI agent its own Chatwoot user, a member of only the inboxes it needs, and
 let it make read (`GET`) requests only.
 
