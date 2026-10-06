@@ -53,7 +53,7 @@ may point to another deployment of that API, for example a proxy or gateway.
   kept, and a greeting goes to them at once instead of waiting for a request.
   Bot and user assignees are distinguished by `assignee_type`.
 - Before **each** action, re-read the inbox link, pending status, assignee, turn boundary, inputs and public human
-  replies. A changed input defers the job to decide again. Apply topic/kind labels, then the kind's canned reply,
+  replies. A changed input defers the job to decide again. Apply topic/kind labels (a kind with `label: false` gets none), then the kind's canned reply,
   then end the turn: set the kind's resolved/snoozed status and immediately release the bot, assign a confident
   owner, or use explicit bot `status=open` handoff. Chatwoot keeps the bot on resolve/snooze, so release is part of
   that same ending, with a fresh ownership/status read. A failed release keeps the durable job for retry, even

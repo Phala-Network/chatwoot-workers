@@ -137,6 +137,19 @@ describe("native bot turns", () => {
     },
   );
 
+  it("handles a kind without a label: the ticket is resolved and keeps its labels", async () => {
+    const mock = world({}, { owner: ["cloud", 1], kind: ["thanks", 1] });
+    await routeConversation(context(new MemoryStore(), KINDS), 1, 5);
+    const mutations = mock.requests.filter(
+      (request) => request.method === "POST" && request.url.hostname === "chatwoot.example.com",
+    );
+    expect(mutations.map((request) => request.url.pathname.split("/").at(-1))).toEqual([
+      "toggle_status",
+      "assignments",
+    ]);
+    expect(mock.ticket.status).toBe("resolved");
+  });
+
   it.each(["spam", "newsletter"])(
     "retries a failed release after %s without repeating the ending or classification",
     async (kind) => {

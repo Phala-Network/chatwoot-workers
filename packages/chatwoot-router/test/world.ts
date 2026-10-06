@@ -18,6 +18,7 @@ export const KINDS = {
       spam: { covers: "Spam.", status: "resolved" },
       newsletter: { covers: "Newsletter.", status: "snoozed" },
       bounty: { covers: "Templated security report.", cannedResponse: "security", status: "resolved" },
+      thanks: { covers: "Only thanks.", status: "resolved", label: false },
     },
   },
 };
