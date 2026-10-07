@@ -301,8 +301,8 @@ Chatwoot); assign other linked agents with `/assign` (agents not linked to Disco
 and set priority, "pending", and several labels with `/priority`, `/pending`, and `/label`.
 
 A command that changes the ticket answers only when it fails, in a message only the invoker sees: the post shows
-what it did (the card updates in place, then Chatwoot's activity line follows). A button acknowledges the click
-without a message; a slash command's ephemeral "thinking…" is deleted once the change is done, and a menu it came
+what it did (the card updates in place, then Chatwoot's activity line follows). A button or a submitted editor
+acknowledges without a message; a slash command's ephemeral "thinking…" is deleted once the change is done, and a menu it came
 from (Assign to, Block's question) goes with it. The Manage panel and Assign to's menu show as before. A slash
 command's `message` option is a single line of text and `attachment` is one file: use the editor
 (no options) for multi-line text or several files. Chatwoot's other snooze options reopen at a

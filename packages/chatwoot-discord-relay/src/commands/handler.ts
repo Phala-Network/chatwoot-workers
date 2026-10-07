@@ -364,10 +364,10 @@ function editor(
 
 function defer(context: Context, action: CommandAction): HandlerResult {
   const { interaction } = context;
-  // A button, menu, or form on a message is acknowledged without a message; a slash command needs one ("thinking…").
+  // A button, menu, or form is acknowledged without a message (DEFERRED_UPDATE_MESSAGE is valid for components and
+  // every modal submit); a slash command needs one ("thinking…").
   const onMessage =
-    interaction.type === InteractionType.MessageComponent ||
-    (interaction.type === InteractionType.ModalSubmit && interaction.message !== undefined);
+    interaction.type === InteractionType.MessageComponent || interaction.type === InteractionType.ModalSubmit;
   // A panel change updates the panel itself, and what shows something to choose from answers with it. Anything else
   // answers only when it fails: the post shows what it did.
   const quiet = context.panel || READ_ONLY_ACTIONS.has(action.type) ? undefined : onMessage ? "followup" : "delete";

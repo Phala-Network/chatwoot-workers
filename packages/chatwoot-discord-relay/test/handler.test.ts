@@ -167,7 +167,9 @@ describe("interaction handler", () => {
     const ref = { url: file.url, filename: "log.txt", size: 64, contentType: "text/plain" };
 
     const reply = await quick("reply", [text]);
+    // A slash command must answer: its "thinking…" goes once the reply is sent.
     expect(reply.response).toEqual({ type: 5, data: { flags: MessageFlags.Ephemeral } });
+    expect(reply.job?.quiet).toBe("delete");
     expect(reply.job?.action).toEqual({ type: "message", private: false, content: "Thanks, fixed now!", files: [] });
     expect((await quick("note", [attachment])).job?.action).toEqual({
       type: "message",
@@ -273,10 +275,12 @@ describe("interaction handler", () => {
     expect(menuCommands[0]).not.toHaveProperty("description");
   });
 
-  it("submitting a reply defers a job that sends as the invoker", async () => {
+  it("submitting a reply defers a job that sends as the invoker, answering only a failure", async () => {
     const { response, job } = await handleInteraction(submission("reply", " Thanks! "), deps);
-    expect(response).toEqual({ type: 5, data: { flags: MessageFlags.Ephemeral } });
+    // Whatever opened the editor (a button, a slash command, Reply with this), the post shows the reply.
+    expect(response).toEqual({ type: 6 });
     expect(job).toMatchObject({
+      quiet: "followup",
       discordUserId: ALICE,
       accountId: 3,
       conversationId: 15,
