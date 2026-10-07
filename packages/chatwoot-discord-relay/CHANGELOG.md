@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-07
+
+### Changed
+
+- A command that changes the ticket answers only when it fails: the post shows what it did (the card updates in
+  place, then Chatwoot's activity line follows), so "✅ Resolved." and the like are gone. A card button acknowledges
+  the click without a message (Discord's deferred update), and a failure comes in a private follow-up; a slash
+  command's private "thinking…", and a menu it came from (Assign to, Block's question), are deleted once the change
+  is done. The Manage panel and Assign to's menu show as before. Commands queued before 0.49 still confirm.
+
 ## [0.48.0] - 2026-10-07
 
 ### Changed

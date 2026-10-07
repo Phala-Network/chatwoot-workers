@@ -23,7 +23,7 @@ import { filesTooLarge, fileTooLarge, isDiscordAttachmentUrl, NOT_LINKED, UserEr
 import { BUTTONS, blockConfirmation, NONE, PANEL } from "./components.ts";
 import { CONTENT_MAX, REPLY_WITH_THIS } from "./definitions.ts";
 import type { Draft } from "./draft.ts";
-import { type AttachmentRef, type CommandAction, type CommandJob, prioritySchema } from "./job.ts";
+import { type AttachmentRef, type CommandAction, type CommandJob, prioritySchema, READ_ONLY_ACTIONS } from "./job.ts";
 
 interface Ticket {
   accountId: number;
@@ -364,11 +364,18 @@ function editor(
 
 function defer(context: Context, action: CommandAction): HandlerResult {
   const { interaction } = context;
+  // A button, menu, or form on a message is acknowledged without a message; a slash command needs one ("thinking…").
+  const onMessage =
+    interaction.type === InteractionType.MessageComponent ||
+    (interaction.type === InteractionType.ModalSubmit && interaction.message !== undefined);
+  // A panel change updates the panel itself, and what shows something to choose from answers with it. Anything else
+  // answers only when it fails: the post shows what it did.
+  const quiet = context.panel || READ_ONLY_ACTIONS.has(action.type) ? undefined : onMessage ? "followup" : "delete";
   return {
-    // A panel change updates the panel itself; anything else answers with a new private message.
-    response: context.panel
-      ? { type: InteractionResponseType.DeferredMessageUpdate }
-      : { type: InteractionResponseType.DeferredChannelMessageWithSource, data: { flags: MessageFlags.Ephemeral } },
+    response:
+      context.panel || quiet === "followup"
+        ? { type: InteractionResponseType.DeferredMessageUpdate }
+        : { type: InteractionResponseType.DeferredChannelMessageWithSource, data: { flags: MessageFlags.Ephemeral } },
     job: {
       interactionId: interaction.id,
       applicationId: interaction.application_id,
@@ -378,6 +385,7 @@ function defer(context: Context, action: CommandAction): HandlerResult {
       conversationId: context.ticket.conversationId,
       action,
       ...(context.panel ? { panel: true } : {}),
+      ...(quiet ? { quiet } : {}),
     },
   };
 }
@@ -461,8 +469,10 @@ async function component(context: Context, interaction: APIMessageComponentInter
  * menu): "@original" is the message the button or menu is on, shown meanwhile as `interim`.
  */
 function inPlace(context: Context, action: CommandAction, interim: string): HandlerResult {
+  const { job } = defer(context, action);
   return {
-    ...defer(context, action),
+    // The menu goes once the action is done; a failure replaces it.
+    ...(job ? { job: { ...job, quiet: "delete" } } : {}),
     response: { type: InteractionResponseType.UpdateMessage, data: { content: interim, components: [] } },
   };
 }

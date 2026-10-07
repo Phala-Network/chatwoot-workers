@@ -228,6 +228,13 @@ class World {
       on("PATCH", /^discord\.com\/api\/v10\/webhooks\/100000000000000001\/[^/]+\/messages\/(@|%40)original$/, () =>
         json({}),
       ),
+      on(
+        "DELETE",
+        /^discord\.com\/api\/v10\/webhooks\/100000000000000001\/[^/]+\/messages\/(@|%40)original$/,
+        () => new Response(null, { status: 204 }),
+      ),
+      // An interaction's follow-up message.
+      on("POST", /^discord\.com\/api\/v10\/webhooks\/100000000000000001\/[^/]+$/, () => json({ id: "900" })),
     ];
   }
 }
@@ -936,7 +943,7 @@ describe("worker", () => {
     expect((await discordInteraction({ type: 1 }, true)).status).toBe(401);
   });
 
-  it("runs a deferred command as the agent and edits the original response", async () => {
+  it("runs a deferred command as the agent, then deletes its private thinking message: the post shows it", async () => {
     const thread = "100000000000030001";
     await existingPost(17, thread);
     const profile = on("GET", "chatwoot.example.com/api/v1/profile", () =>
@@ -961,17 +968,65 @@ describe("worker", () => {
     await vi.waitFor(() =>
       expect(world.requests.some((request) => request.url.pathname.endsWith("original"))).toBe(true),
     );
-    const edit = world.requests.find((request) => request.url.pathname.endsWith("original"));
-    expect(decodeURIComponent(edit?.url.pathname ?? "")).toBe(
+    const answer = world.requests.find((request) => request.url.pathname.endsWith("original"));
+    expect([answer?.method, decodeURIComponent(answer?.url.pathname ?? "")]).toEqual([
+      "DELETE",
       "/api/v10/webhooks/100000000000000001/interaction-token/messages/@original",
-    );
-    expect(JSON.parse(edit?.body ?? "")).toEqual({ content: "✅ Resolved.", allowed_mentions: { parse: [] } });
+    ]);
     const toggled = world.requests.find((request) => request.url.pathname.endsWith("/toggle_status"));
     expect(toggled?.headers.get("api_access_token")).toBe("token-alice");
     // The post shows the change at once, without waiting for Chatwoot's event.
     expect(buttons(world.cards().at(-1)?.body)?.at(-1)).toEqual(["ticket:reopen", "ticket:block", "ticket:manage"]);
     expect(JSON.parse(world.sent("PATCH", new RegExp(`^/api/v10/channels/${thread}$`)).at(-1)?.body ?? "")).toEqual({
       archived: true,
+    });
+  });
+
+  it("answers a card button only when it fails, in a private follow-up", async () => {
+    const thread = "100000000000030011";
+    await existingPost(92, thread);
+    const profile = on("GET", "chatwoot.example.com/api/v1/profile", () =>
+      json({ id: 42, name: "Alice", email: "alice@example.com", accounts: [{ id: 3 }] }),
+    );
+    let allowed = true;
+    const toggle = on("POST", "chatwoot.example.com/api/v1/accounts/3/conversations/92/toggle_status", () =>
+      allowed ? json({}) : json({ error: "forbidden" }, { status: 403 }),
+    );
+    world.mock.spy.mockRestore();
+    world = new World([profile, toggle]);
+    world.conversation(92, [], {}, "resolved");
+    const press = (id: string) =>
+      discordInteraction({
+        id,
+        application_id: "100000000000000001",
+        token: "interaction-token",
+        type: 3,
+        channel_id: thread,
+        channel: { id: thread, type: 11 },
+        member: { user: { id: ALICE } },
+        message: { id: "100000000000030012", components: [] },
+        data: { custom_id: "ticket:resolve", component_type: 2 },
+      });
+    const answers = () => world.requests.filter((request) => request.url.pathname.includes("/interaction-token"));
+
+    expect(await (await press("900101")).json()).toEqual({ type: 6 });
+    await drain();
+    expect(world.requests.some((request) => request.url.pathname.endsWith("/toggle_status"))).toBe(true);
+    expect(answers()).toEqual([]);
+
+    allowed = false;
+    expect(await (await press("900102")).json()).toEqual({ type: 6 });
+    await drain();
+    await vi.waitFor(() => expect(answers()).toHaveLength(1));
+    const [followUp] = answers();
+    expect([followUp?.method, followUp?.url.pathname]).toEqual([
+      "POST",
+      "/api/v10/webhooks/100000000000000001/interaction-token",
+    ]);
+    expect(JSON.parse(followUp?.body ?? "")).toEqual({
+      content: "❌ You do not have access to this conversation.",
+      flags: 64,
+      allowed_mentions: { parse: [] },
     });
   });
 

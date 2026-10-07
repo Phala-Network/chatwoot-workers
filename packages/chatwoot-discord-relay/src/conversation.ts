@@ -14,6 +14,7 @@ import {
   MessageFlags,
   type RESTPatchAPIWebhookWithTokenMessageJSONBody,
   type RESTPatchAPIWebhookWithTokenMessageResult,
+  type RESTPostAPIWebhookWithTokenJSONBody,
   Routes,
 } from "discord-api-types/v10";
 import { z } from "zod";
@@ -24,7 +25,7 @@ import { errorFields, log } from "../../../shared/log.ts";
 import { retryDelay } from "../../../shared/store.ts";
 import { executeCommand } from "./commands/actions.ts";
 import { text } from "./commands/components.ts";
-import { type CommandJob, commandJobSchema } from "./commands/job.ts";
+import { type CommandJob, commandJobSchema, READ_ONLY_ACTIONS } from "./commands/job.ts";
 import type { Settings } from "./config.ts";
 import { DiscordForum } from "./discord/forum.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
@@ -49,8 +50,6 @@ type JobPayload = z.infer<typeof payloadSchema>;
 const PRIORITY = { command: 0, sync: 1, answer: 2, conversation: 3, "message-updated": 4 } as const;
 /** Requests a command may need: it starts only with this many left, so it is never cut short. */
 const COMMAND_BUDGET = 20;
-/** Commands that change nothing in Chatwoot: their post needs no sync. */
-const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set(["panel", "pick-assignee"]);
 /** A job that takes longer than this is logged. */
 const SLOW_JOB_MS = 5000;
 /** Stop draining and continue in a new invocation after this long (alarms may run 15 minutes). */
@@ -279,7 +278,7 @@ export class Conversation extends DurableObject<Env> {
     // Chatwoot sends no webhook when a conversation is deleted: let its job close the post.
     if (conversationGone) this.enqueue({ type: "conversation", accountId, conversationId });
     else if (!READ_ONLY_ACTIONS.has(job.action.type)) this.enqueue({ type: "sync", accountId, conversationId });
-    await respond(services.rest, job, content, components);
+    await respond(services.rest, job, content, components, done);
   }
 
   /**
@@ -367,7 +366,26 @@ async function respond(
   job: CommandJob,
   content: string,
   given?: APIMessageTopLevelComponent[],
+  done?: true,
 ): Promise<void> {
+  const original = Routes.webhookMessage(job.applicationId, job.token, "@original");
+  try {
+    // A quiet action that was done says nothing (see CommandJob.quiet); one that failed says why, privately.
+    if (job.quiet && done) {
+      if (job.quiet === "delete") await rest.delete(original, { auth: false });
+      return;
+    }
+    if (job.quiet === "followup") {
+      await rest.post<unknown, RESTPostAPIWebhookWithTokenJSONBody>(Routes.webhook(job.applicationId, job.token), {
+        body: { content, flags: MessageFlags.Ephemeral, allowed_mentions: { parse: [] } },
+        auth: false,
+      });
+      return;
+    }
+  } catch (error) {
+    log.error("command follow-up failed", { interactionId: job.interactionId, ...errorFields(error) });
+    return;
+  }
   // A job from the Manage panel replaces that Components V2 message, which cannot take content.
   const components = given ?? (job.panel ? [text(content)] : undefined);
   const v2 = components?.some((component) => component.type !== ComponentType.ActionRow);
@@ -375,10 +393,10 @@ async function respond(
     ? { flags: MessageFlags.IsComponentsV2, components }
     : { content, ...(components ? { components } : {}) };
   try {
-    await rest.patch<RESTPatchAPIWebhookWithTokenMessageResult, RESTPatchAPIWebhookWithTokenMessageJSONBody>(
-      Routes.webhookMessage(job.applicationId, job.token, "@original"),
-      { body: { ...body, allowed_mentions: { parse: [] } }, auth: false },
-    );
+    await rest.patch<RESTPatchAPIWebhookWithTokenMessageResult, RESTPatchAPIWebhookWithTokenMessageJSONBody>(original, {
+      body: { ...body, allowed_mentions: { parse: [] } },
+      auth: false,
+    });
   } catch (error) {
     log.error("command follow-up failed", { interactionId: job.interactionId, ...errorFields(error) });
   }

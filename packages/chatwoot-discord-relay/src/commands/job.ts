@@ -51,6 +51,9 @@ const actionSchema = z.discriminatedUnion("type", [
 ]);
 export type CommandAction = z.infer<typeof actionSchema>;
 
+/** Actions that only show something to choose from (the Manage panel, Assign to's menu), and change nothing. */
+export const READ_ONLY_ACTIONS: ReadonlySet<CommandAction["type"]> = new Set(["panel", "pick-assignee"]);
+
 export const commandJobSchema = z.object({
   interactionId: z.string(),
   applicationId: z.string(),
@@ -62,5 +65,11 @@ export const commandJobSchema = z.object({
   action: actionSchema,
   /** The response is the Manage panel, drawn again after the action (it replaces the panel it came from). */
   panel: z.boolean().optional(),
+  /**
+   * An action answers only when it fails: the post shows what it did. "followup": the interaction was acknowledged
+   * without a message, so a failure comes in a private follow-up. "delete": a private message stands for it
+   * ("thinking…", or the menu it came from), deleted once it is done. Unset in jobs queued before 0.49, which confirm.
+   */
+  quiet: z.enum(["followup", "delete"]).optional(),
 });
 export type CommandJob = z.infer<typeof commandJobSchema>;

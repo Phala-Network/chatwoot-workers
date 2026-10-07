@@ -300,7 +300,10 @@ longer than a menu option can be is named in the menu's placeholder instead, and
 Chatwoot); assign other linked agents with `/assign` (agents not linked to Discord in Chatwoot),
 and set priority, "pending", and several labels with `/priority`, `/pending`, and `/label`.
 
-The invoker of a command sees an ephemeral "thinking…" that is replaced by the result. A slash
+A command that changes the ticket answers only when it fails, in a message only the invoker sees: the post shows
+what it did (the card updates in place, then Chatwoot's activity line follows). A button acknowledges the click
+without a message; a slash command's ephemeral "thinking…" is deleted once the change is done, and a menu it came
+from (Assign to, Block's question) goes with it. The Manage panel and Assign to's menu show as before. A slash
 command's `message` option is a single line of text and `attachment` is one file: use the editor
 (no options) for multi-line text or several files. Chatwoot's other snooze options reopen at a
 time of day in the agent's browser time zone, which Discord does not share; use Chatwoot for
@@ -324,7 +327,7 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `chatwoot.sendAsAgent` | boolean | `false` | The Chatwoot build sends email replies with `content_attributes.send_as_agent` from the agent's own address; the reply editor offers **Send from my email address**. |
 | `accounts[]` | at least one; unique `id` | required | Relayed Chatwoot accounts. Accounts may share a forum. |
 | `accounts[].id` | integer > 0 | required | Chatwoot account id. |
-| `accounts[].name` | non-empty string | required | Shown in post titles (`[<name> #12] …`) and command confirmations. |
+| `accounts[].name` | non-empty string | required | Shown in post titles (`[<name> #12] …`) and command menus. |
 | `accounts[].forumChannelId` | Discord id (17–20 digits) | required | The forum channel of the account's posts. |
 | `accounts[].inboxIds` | non-empty array of integers > 0 | every inbox | Relay only conversations of these inboxes. |
 | `accounts[].cardNoteBotId` | integer > 0 | unset | The account's agent bot whose latest private note the card shows ([the card](#commands-and-buttons)). |
