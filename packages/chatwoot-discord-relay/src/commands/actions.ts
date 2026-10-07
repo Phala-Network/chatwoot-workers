@@ -29,6 +29,8 @@ interface CommandResult {
   components?: APIMessageTopLevelComponent[];
   /** The action was carried out. */
   done?: true;
+  /** The action made its invoker the assignee (Take, Assign to themselves, a reply to an unassigned conversation). */
+  selfAssigned?: true;
   /** Chatwoot could not find the conversation: it may have been deleted. */
   conversationGone: boolean;
 }
@@ -54,6 +56,7 @@ export async function executeCommand(job: CommandJob, settings: Settings, fetch:
     if (!profile.accounts?.some((account) => account.id === accountId)) throw new UserError(NOT_IN_ACCOUNT);
 
     let message = "";
+    let selfAssigned = false;
     switch (action.type) {
       case "panel":
         break;
@@ -130,6 +133,7 @@ export async function executeCommand(job: CommandJob, settings: Settings, fetch:
         const assignee = agents.find((agent) => agent.id === action.chatwootUserId);
         if (!assignee) throw new UserError("That agent is not in this Chatwoot account.");
         await chatwoot.assign(accountId, conversationId, action.chatwootUserId);
+        selfAssigned = action.chatwootUserId === profile.id;
         // The name Chatwoot shows as the assignee, which is also the post's assignee tag.
         message = `Assigned to ${assignee.name ?? "the agent"}.`;
         break;
@@ -165,7 +169,10 @@ export async function executeCommand(job: CommandJob, settings: Settings, fetch:
           // 24-hour window (Conversations::MessageWindowService at v4.18.0).
           if (conversation.can_reply === false) throw new UserError(CANNOT_REPLY);
           // A public reply to an unassigned conversation assigns it to the replying agent.
-          if (!personAssignee(conversation)) await chatwoot.assign(accountId, conversationId, profile.id);
+          if (!personAssignee(conversation)) {
+            await chatwoot.assign(accountId, conversationId, profile.id);
+            selfAssigned = true;
+          }
         }
         const limits = settings.config.attachments;
         const files = [];
@@ -195,10 +202,16 @@ export async function executeCommand(job: CommandJob, settings: Settings, fetch:
         content: message ? `✅ ${message}` : ticket,
         components: await drawPanel(chatwoot, accountId, conversationId, ticket, message, settings),
         done: true,
+        ...(selfAssigned && { selfAssigned: true }),
         conversationGone: false,
       };
     }
-    return { content: `✅ ${message}`, done: true, conversationGone: false };
+    return {
+      content: `✅ ${message}`,
+      done: true,
+      ...(selfAssigned && { selfAssigned: true }),
+      conversationGone: false,
+    };
   } catch (error) {
     const gone = error instanceof ConversationGoneError || (error instanceof ChatwootError && error.status === 404);
     return { content: failure(error, job), conversationGone: gone };

@@ -527,6 +527,25 @@ describe("Relay", () => {
     ]);
   });
 
+  it("does not ping an agent who assigned themselves from Discord: Chatwoot's line shows as is", async () => {
+    ({ relay, forum, tick } = relayWith({ linkedAgent: () => ({ discordUserId: "592" }) }));
+    await relay.relay(message());
+    relay.assignedThemselves(3, 12, 7);
+    const kim = { assignee: { id: 7, name: "Kim" } };
+    const line = message({
+      id: 102,
+      messageType: "activity",
+      content: "Kim self-assigned this conversation",
+      conversation: kim,
+    });
+    await relay.relay(line);
+    await relay.announceAssignee(3, line.conversation);
+    tick(ASSIGNMENT_WAIT);
+    await relay.announceAssignee(3, line.conversation);
+    expect(forum.contents().slice(-1)).toEqual(["-# _Kim self-assigned this conversation_"]);
+    expect(forum.calls.some(([, payload]) => payload.allowed_mentions?.users)).toBe(false);
+  });
+
   it("tells assignees apart by Chatwoot user id: a rename does not ping, a reassignment does", async () => {
     const agents: Record<number, LinkedAgent> = { 7: { discordUserId: "592" }, 8: { discordUserId: "593" } };
     ({ relay, forum, tick } = relayWith({ linkedAgent: (id) => agents[id] }));

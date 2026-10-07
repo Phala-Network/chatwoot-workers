@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-07
+
+### Changed
+
+- An agent who assigns themselves from Discord (Take, Assign to themselves, or a reply to an unassigned conversation)
+  is not pinged for it: Chatwoot's line ("Kim self-assigned this conversation") shows as is. An assignment someone
+  else makes still pings its assignee.
+
 ## [0.47.0] - 2026-10-06
 
 ### Changed

@@ -307,6 +307,17 @@ export class Relay {
   }
 
   /**
+   * A command made its invoker, Chatwoot user `userId`, the assignee: they did it, so nobody is pinged for it
+   * (Chatwoot's assignment line shows as is). An assignment someone else makes pings its assignee (see
+   * announceAssignee).
+   */
+  assignedThemselves(accountId: number, conversationId: number, userId: number): void {
+    const { store } = this.options;
+    if (!store.conversation(accountId, conversationId)?.threadId) return;
+    store.updateConversation(accountId, conversationId, { announcedAssignee: String(userId) }); // see assigneeKey
+  }
+
+  /**
    * After a run's messages, while an announcement is pending: a newly assigned, linked agent is pinged on Chatwoot's
    * assignment line that names them (see assignmentPing), which Chatwoot may create a little after the assignment.
    * Until that line comes, the announcement waits; after ASSIGNMENT_LINE_WAIT_MS it pings them in a notice of its

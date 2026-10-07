@@ -143,7 +143,7 @@ describe("executeCommand", () => {
   });
 
   it("assigns by the target agent's Chatwoot user id, whatever their email", async () => {
-    const { result, requests } = run(
+    const { outcome, result, requests } = run(
       { type: "assign", chatwootUserId: 43 },
       on("GET", `${cw}/accounts/3/agents`, () =>
         json([
@@ -156,6 +156,17 @@ describe("executeCommand", () => {
     // Chatwoot shows the assignee's `name`, which is also the post's assignee tag.
     expect(await result).toBe("✅ Assigned to Bob Example.");
     expect(JSON.parse(requests.at(-1)?.body ?? "")).toEqual({ assignee_id: 43, assignee_type: "User" });
+    // Someone else's assignment pings its assignee.
+    expect((await outcome).selfAssigned).toBeUndefined();
+  });
+
+  it("tells when the invoker assigned themselves (Take), so they are not pinged for it", async () => {
+    const { outcome } = run(
+      { type: "assign", chatwootUserId: 42 },
+      on("GET", `${cw}/accounts/3/agents`, () => json([{ id: 42, name: "Alice Example" }])),
+      ok("POST", `${conversation}/assignments`),
+    );
+    expect(await outcome).toMatchObject({ done: true, selfAssigned: true });
   });
 
   it("refuses to assign an agent outside the account, which Chatwoot would treat as unassigning", async () => {
@@ -168,13 +179,14 @@ describe("executeCommand", () => {
   });
 
   it("a public reply to an unassigned conversation assigns it to the sender first", async () => {
-    const { result, requests } = run(
+    const { outcome, result, requests } = run(
       { type: "message", private: false, content: "Thanks!", files: [] },
       on("GET", conversation, () => json({ id: 15, status: "open", meta: {} })),
       ok("POST", `${conversation}/assignments`),
       ok("POST", `${conversation}/messages`),
     );
     expect(await result).toBe("✅ Sent to the customer as Alice.");
+    expect((await outcome).selfAssigned).toBe(true);
     expect(requests.map((request) => `${request.method} ${request.url.pathname}`).slice(1)).toEqual([
       "GET /api/v1/accounts/3/conversations/15",
       "POST /api/v1/accounts/3/conversations/15/assignments",
