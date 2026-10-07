@@ -43,7 +43,9 @@ deleted in Discord, it is sent again without the missing tags, and a warning nam
   they left the server, only a warning is logged). Chatwoot may create the line a little after
   the assignment; when no such line comes within 2 minutes (e.g. a conversation assigned at
   creation), a `-# Assigned to @name` notice pings them instead. Customer messages do not ping
-  them while their announcement waits. After that, every
+  them while their announcement waits. Nobody is pinged for their own action: an agent who takes
+  the ticket from Discord (Take, Assign to themselves, or a reply to an unassigned conversation)
+  is not pinged for it; one who assigns themselves in Chatwoot is, as the relay cannot tell. After that, every
   customer message pings the linked assignee, on a line at its end. A linked
   agent @mentioned in a private note is pinged there; other Chatwoot mentions show as `@name`.
   Nothing else pings anyone.
