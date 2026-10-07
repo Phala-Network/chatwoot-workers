@@ -381,6 +381,30 @@ describe("native bot turns", () => {
     expect(mock.ticket.status).toBe("open");
   });
 
+  it("stops waiting for a request once the customer has said nothing for 30 minutes", async () => {
+    const said = (minutes: number) => ({ ...incoming(1, "Hello there"), created_at: Date.now() / 1000 - minutes * 60 });
+    const recent = world({ messages: [said(29)] }, { owner: ["unclear", 1], request: ["none", 1] });
+    await routeConversation(context(), 1, 5);
+    expect(recent.ticket.status).toBe("pending");
+    vi.restoreAllMocks();
+    const quiet = world({ messages: [said(31)] }, { owner: ["unclear", 1], request: ["none", 1] });
+    await routeConversation(context(), 1, 5);
+    expect(quiet.ticket.status).toBe("open");
+  });
+
+  it("tells Jev an email's sender domain, never its address or name", async () => {
+    const mock = world({
+      channel: "Channel::Email",
+      name: "node101",
+      email: "reply+3mi51g@mg1.substack.com",
+      messages: [incoming(1, "node101 writes: View this post on the web")],
+    });
+    await routeConversation(context(), 1, 5);
+    expect(JSON.parse(sent(mock.requests, "POST", JEV)[0]?.body ?? "{}").state.ticket).toBe(
+      "Email sender domain: mg1.substack.com\n[REDACTED] writes: View this post on the web",
+    );
+  });
+
   it("hands off three greeting texts or an unclear actual request", async () => {
     const mock = world(
       { messages: [incoming(1, "Hi"), incoming(2, "Hello"), incoming(3, "Anyone there")] },

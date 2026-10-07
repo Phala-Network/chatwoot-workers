@@ -36,6 +36,11 @@ const NO_KIND = "none";
 const NO_KIND_CRITERION = "None of the other kinds.";
 const MAX_MESSAGES = 3;
 const MAX_TEXT = 1600;
+/**
+ * How long a ticket with no request yet waits for the customer to say more. A customer who greets and leaves, or an
+ * email that asks for nothing (a newsletter), says no more: after this, the sweep hands it on like any other ticket.
+ */
+const REQUEST_WAIT_SECONDS = 30 * 60;
 
 const REDACTIONS = [
   /(?<![\w.+-])[\w.+-]+@[\w.-]+\.[a-z]{2,}(?!\w)/gi, // email
@@ -153,6 +158,10 @@ export async function routeConversation(
   const initial = await snapshot();
   if (!initial) return;
   const identities = [initial.conversation.contact.name, initial.conversation.contact.email];
+  // An email's sender domain tells a mailing service (a newsletter, a notification) from a person; the address and
+  // name stay out, like every identifier.
+  const senderDomain =
+    initial.conversation.channel === "Channel::Email" ? initial.conversation.contact.email?.split("@")[1] : undefined;
   const inputs = (messages: ChatwootMessage[]) => {
     const texts = messages
       .filter(isCustomer)
@@ -164,12 +173,10 @@ export async function routeConversation(
         return text.replaceAll("[REDACTED]", "").trim() ? [{ id: message.id, text }] : [];
       })
       .slice(0, MAX_MESSAGES);
+    const text = texts.map((entry) => entry.text).join(" ");
     return {
       key: texts.map((entry) => entry.id).join(","),
-      text: texts
-        .map((entry) => entry.text)
-        .join(" ")
-        .slice(0, MAX_TEXT),
+      text: (senderDomain ? `Email sender domain: ${senderDomain}\n${text}` : text).slice(0, MAX_TEXT),
       count: texts.length,
     };
   };
@@ -216,8 +223,11 @@ export async function routeConversation(
   let current = await fresh();
   if (current === "defer" || !current) return current;
   if (current.handoff) return handoff(current);
-  // A greeting waits for a request, unless the ticket has an owner to hand it to.
-  if (!kind && decision.noRequest && input.count < MAX_MESSAGES && !current.conversation.assignee) return;
+  // A greeting waits for a request, unless the ticket has an owner to hand it to, or the customer has said nothing
+  // for REQUEST_WAIT_SECONDS (the sweep routes the ticket again).
+  const lastSaid = Math.max(0, ...turn.messages.filter(isCustomer).map((message) => message.created_at ?? Infinity));
+  const waiting = Date.now() / 1000 - lastSaid < REQUEST_WAIT_SECONDS;
+  if (!kind && decision.noRequest && input.count < MAX_MESSAGES && !current.conversation.assignee && waiting) return;
   const topic =
     !kind?.status &&
     decision.topic !== null &&
