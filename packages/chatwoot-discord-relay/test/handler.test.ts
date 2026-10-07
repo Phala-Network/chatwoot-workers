@@ -478,19 +478,20 @@ describe("ticket buttons and the Manage panel", () => {
     expect(privateText(await press("ticket:draft:not-an-id"))).toMatch(/Unknown button/);
   });
 
-  it("Take assigns the invoker, Resolve resolves, Manage draws the panel, each answered privately", async () => {
-    const deferred = {
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral },
-    };
+  it("Take assigns the invoker and Resolve resolves, answering only a failure; Manage draws the panel privately", async () => {
     const take = await press("ticket:take");
-    expect(take.response).toEqual(deferred);
-    expect(take.job?.action).toEqual({ type: "assign", chatwootUserId: 42 });
+    expect(take.response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate });
+    expect(take.job).toMatchObject({ action: { type: "assign", chatwootUserId: 42 }, quiet: "followup" });
     expect((await press("ticket:resolve")).job?.action).toEqual({ type: "status", status: "resolved" });
     expect((await press("ticket:reopen")).job?.action).toEqual({ type: "status", status: "open" });
     const manage = await press("ticket:manage");
+    expect(manage.response).toEqual({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral },
+    });
     expect(manage.job?.action).toEqual({ type: "panel" });
     expect(manage.job).not.toHaveProperty("panel");
+    expect(manage.job).not.toHaveProperty("quiet");
     expect((await press("ticket:snooze")).job?.action).toEqual({ type: "status", status: "snoozed" });
   });
 
@@ -503,6 +504,8 @@ describe("ticket buttons and the Manage panel", () => {
     });
     expect(chosen.job?.action).toEqual({ type: "assign", chatwootUserId: 43 });
     expect(chosen.job).not.toHaveProperty("panel");
+    // The menu goes once it is done.
+    expect(chosen.job?.quiet).toBe("delete");
     expect((await press("ticket:assignee", [":none"])).job?.action).toEqual({ type: "unassign" });
   });
 
