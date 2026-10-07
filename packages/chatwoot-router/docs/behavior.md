@@ -28,7 +28,9 @@ may point to another deployment of that API, for example a proxy or gateway.
   The latest `conversation_status_changed` activity begins the turn; without one or evidence it is missing, use
   the conversation's start. Take the first three usable customer texts after the boundary, oldest first. Include
   email subjects and reply text without quoted history; omit automatic email, deleted messages and private notes.
-  Redact identifiers and contact names, then cap the input at 1,600 characters. Memoize Jev's decision by input ids.
+  Redact identifiers and contact names; for an email conversation, lead with the sender's domain alone
+  (`Email sender domain: mg1.substack.com`), which tells a mailing service from a person. Cap the input at 1,600
+  characters. Memoize Jev's decision by input ids.
 - Status activity is asynchronous. The queue's boundary guard remembers an observed/expected transition and the
   last boundary needed to reject stale handoff work. An activity read before its first status webhook can match
   that webhook's status and time only if no existing expectation requires a newer activity. Merging a webhook
@@ -45,7 +47,8 @@ may point to another deployment of that API, for example a proxy or gateway.
   changes create none. Activities use job execution time, and customer/scheduled reopen usually creates none.
   A late activity ordered after new text does not license reading old text across the boundary; empty input hands off.
 - Jev chooses owner, topic, kind and whether there is a request. A confident kind takes precedence; otherwise a
-  confident greeting/no-request stays pending while fewer than three texts exist. Empty or identifier-only input,
+  confident greeting/no-request stays pending while fewer than three texts exist and the customer's latest text is
+  less than 30 minutes old; after that the sweep routes it on like any other ticket. Empty or identifier-only input,
   three greetings, an unclear owner with an actual request, or a public human reply hands off. Blocked contacts
   and conversations of another bot are untouched during routing; disconnect handoff also clears blocked bot leftovers.
   A person on a pending conversation is its owner from before it was resolved (a customer message reopens a resolved

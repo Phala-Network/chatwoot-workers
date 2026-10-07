@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-07
+
+### Changed
+
+- Jev sees an email's sender domain (`Email sender domain: mg1.substack.com`) before the customer's text, never the
+  address or name: a newsletter or notification sent through a mailing service is told from a person, so the spam
+  kind can end it. Other identifiers are redacted as before.
+
+### Fixed
+
+- A ticket with no request yet waits for the customer to say more for 30 minutes at most, then the sweep routes it on
+  like any other ticket. An email that asked for nothing (a newsletter Jev did not call spam) stayed pending, with no
+  post and no owner, until someone noticed it.
+
 ## [0.6.0] - 2026-10-05
 
 ### Added

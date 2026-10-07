@@ -62,6 +62,9 @@ export interface Ticket {
   blocked?: boolean;
   agents?: number[];
   name?: string;
+  /** The contact's address, and the conversation's channel. */
+  email?: string;
+  channel?: string;
   labels?: string[];
   messages?: ChatwootMessage[];
   bot?: { id: number; account_id: number } | null;
@@ -115,7 +118,12 @@ export function world(ticket: Ticket = {}, answers: Answers = { owner: ["cloud",
               meta: {
                 assignee: ticket.assignee,
                 assignee_type: ticket.assigneeType,
-                sender: { name: ticket.name ?? "Jane Doe", email: "jane@example.com", blocked: ticket.blocked },
+                sender: {
+                  name: ticket.name ?? "Jane Doe",
+                  email: ticket.email ?? "jane@example.com",
+                  blocked: ticket.blocked,
+                },
+                channel: ticket.channel,
               },
             });
       }),
