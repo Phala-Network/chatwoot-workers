@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.1] - 2026-10-07
+
+### Changed
+
+- A submitted editor (`/reply` or `/note` without options, **Reply with this**) is acknowledged without a message, as
+  a card button is: Discord's deferred update is valid for every modal submit, so no "thinking…" shows and is deleted.
+
 ## [0.49.0] - 2026-10-07
 
 ### Changed
