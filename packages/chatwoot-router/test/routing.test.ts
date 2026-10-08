@@ -392,6 +392,14 @@ describe("native bot turns", () => {
     expect(quiet.ticket.status).toBe("open");
   });
 
+  it("tells Jev a widget contact's email domain too, such as a reserved test domain", async () => {
+    const mock = world({ email: "qa.probe@example.net", messages: [incoming(1, "QA-READ-OWN-MARKER-4471")] });
+    await routeConversation(context(), 1, 5);
+    expect(JSON.parse(sent(mock.requests, "POST", JEV)[0]?.body ?? "{}").state.ticket).toBe(
+      "Contact email domain: example.net\nQA-READ-OWN-MARKER-4471",
+    );
+  });
+
   it("tells Jev an email's sender domain, never its address or name", async () => {
     const mock = world({
       channel: "Channel::Email",
@@ -401,7 +409,7 @@ describe("native bot turns", () => {
     });
     await routeConversation(context(), 1, 5);
     expect(JSON.parse(sent(mock.requests, "POST", JEV)[0]?.body ?? "{}").state.ticket).toBe(
-      "Email sender domain: mg1.substack.com\n[REDACTED] writes: View this post on the web",
+      "Contact email domain: mg1.substack.com\n[REDACTED] writes: View this post on the web",
     );
   });
 

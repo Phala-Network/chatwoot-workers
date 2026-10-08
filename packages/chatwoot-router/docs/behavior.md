@@ -28,8 +28,9 @@ may point to another deployment of that API, for example a proxy or gateway.
   The latest `conversation_status_changed` activity begins the turn; without one or evidence it is missing, use
   the conversation's start. Take the first three usable customer texts after the boundary, oldest first. Include
   email subjects and reply text without quoted history; omit automatic email, deleted messages and private notes.
-  Redact identifiers and contact names; for an email conversation, lead with the sender's domain alone
-  (`Email sender domain: mg1.substack.com`), which tells a mailing service from a person. Cap the input at 1,600
+  Redact identifiers and contact names; lead with the contact's email domain alone, on any channel
+  (`Contact email domain: mg1.substack.com`), which tells a mailing service or a reserved test domain (example.com)
+  from a person. Cap the input at 1,600
   characters. Memoize Jev's decision by input ids.
 - Status activity is asynchronous. The queue's boundary guard remembers an observed/expected transition and the
   last boundary needed to reject stale handoff work. An activity read before its first status webhook can match

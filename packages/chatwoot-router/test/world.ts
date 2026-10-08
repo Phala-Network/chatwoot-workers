@@ -120,7 +120,7 @@ export function world(ticket: Ticket = {}, answers: Answers = { owner: ["cloud",
                 assignee_type: ticket.assigneeType,
                 sender: {
                   name: ticket.name ?? "Jane Doe",
-                  email: ticket.email ?? "jane@example.com",
+                  email: ticket.email ?? null,
                   blocked: ticket.blocked,
                 },
                 channel: ticket.channel,
