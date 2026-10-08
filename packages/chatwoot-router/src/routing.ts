@@ -158,10 +158,9 @@ export async function routeConversation(
   const initial = await snapshot();
   if (!initial) return;
   const identities = [initial.conversation.contact.name, initial.conversation.contact.email];
-  // An email's sender domain tells a mailing service (a newsletter, a notification) from a person; the address and
-  // name stay out, like every identifier.
-  const senderDomain =
-    initial.conversation.channel === "Channel::Email" ? initial.conversation.contact.email?.split("@")[1] : undefined;
+  // The contact's email domain tells a mailing service (a newsletter, a notification) or a reserved test domain
+  // (example.com) from a person, on any channel; the address and name stay out, like every identifier.
+  const contactDomain = initial.conversation.contact.email?.split("@")[1];
   const inputs = (messages: ChatwootMessage[]) => {
     const texts = messages
       .filter(isCustomer)
@@ -176,7 +175,7 @@ export async function routeConversation(
     const text = texts.map((entry) => entry.text).join(" ");
     return {
       key: texts.map((entry) => entry.id).join(","),
-      text: (senderDomain ? `Email sender domain: ${senderDomain}\n${text}` : text).slice(0, MAX_TEXT),
+      text: (contactDomain ? `Contact email domain: ${contactDomain}\n${text}` : text).slice(0, MAX_TEXT),
       count: texts.length,
     };
   };

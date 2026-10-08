@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-08
+
+### Changed
+
+- Jev sees the contact's email domain on every channel (`Contact email domain: example.net`), not only an email's
+  sender domain: a widget visitor who gives an address at a reserved test domain, as scripted probes do, is told
+  from a person, so the spam kind can end the ticket. The address and name stay redacted.
+
 ## [0.7.0] - 2026-10-07
 
 ### Changed

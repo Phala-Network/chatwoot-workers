@@ -12,8 +12,8 @@ is each routed account's native agent bot, connected to the inboxes it should ro
 1. A new ticket in a connected inbox is pending, so Chatwoot sends its events to the router's
    `/chatwoot/agent-bot` webhook. Each conversation is routed by a Durable Object of its own, so a slow request
    for one conversation never delays another.
-2. The router reads the customer's first messages of this turn (redacted, at most three and 1,600 characters; an
-   email's sender domain leads them)
+2. The router reads the customer's first messages of this turn (redacted, at most three and 1,600 characters; the
+   contact's email domain leads them)
    and asks TypeSafe's System One API (`/v1/systemone`, model `routing.model`, Jev by default; `routing.endpoint`
    may point to another deployment) for the owner, topic, kind, and whether there is a request yet.
 3. It applies the topic and kind labels, sends the kind's canned reply if it has one (at most once per
@@ -151,7 +151,7 @@ the Router DO during rollback. If its state is lost or restored to an older reco
 and isolate conversations with uncertain attempts/turns for owner review; a currently empty history does not
 prove another send is safe. Existing pending conversations are reconciled; non-pending conversations stay with people. The user token must see all relevant inboxes.
 
-Redaction is best effort, not anonymization: other personal information can still reach TypeSafe, and an email's
-sender domain is sent on purpose (never the address or name). Logs contain
+Redaction is best effort, not anonymization: other personal information can still reach TypeSafe, and the
+contact's email domain is sent on purpose (never the address or name). Logs contain
 ids and outcomes, never message bodies or credentials. See [SECURITY.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/SECURITY.md),
 [CONTRIBUTING.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/CONTRIBUTING.md) and [CHANGELOG.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-router/CHANGELOG.md). Licensed under [MIT](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-router/LICENSE).
