@@ -79,7 +79,7 @@ describe("guild command registration", () => {
       application,
       forum,
       on("GET", `${API}/channels/${otherForum}`, () => json({ guild_id: otherGuild })),
-      on("PUT", new RegExp(`^${API}/applications/${APP}/guilds/\\d+/commands$`), () => json([])),
+      on("PUT", new RegExp(`^discord\\.com/api/v10/applications/${APP}/guilds/\\d+/commands$`), () => json([])),
     );
     await withHub(async (instance, store) => {
       const payload = commandRegistrationPayload();
@@ -117,7 +117,7 @@ describe("guild command registration", () => {
         forum,
         on("GET", `${API}/channels/${otherForum}`, () => json({ guild_id: GUILD })),
         on("GET", `${API}/channels/${thirdForum}`, () => json({ guild_id: otherGuild })),
-        on("PUT", new RegExp(`^${API}/applications/${APP}/guilds/\\d+/commands$`), () => {
+        on("PUT", new RegExp(`^discord\\.com/api/v10/applications/${APP}/guilds/\\d+/commands$`), () => {
           expect(store.get(HASH_KEY)).toBe("previous-payload");
           return json([]);
         }),
@@ -193,7 +193,7 @@ describe("guild command registration", () => {
         started.resolve();
         return response.promise;
       }),
-      on("GET", /^chatwoot.example.com\/api\/v1\/accounts\/\d+\/conversations$/, () =>
+      on("GET", /^chatwoot\.example\.com\/api\/v1\/accounts\/\d+\/conversations$/, () =>
         json({ data: { meta: {}, payload: [] } }),
       ),
     );
@@ -239,7 +239,7 @@ describe("guild command registration", () => {
     ).config;
     const { requests } = mockFetch(
       application,
-      on("GET", /^discord.com\/api\/v10\/channels\/\d+$/, () => json({ guild_id: GUILD })),
+      on("GET", /^discord\.com\/api\/v10\/channels\/\d+$/, () => json({ guild_id: GUILD })),
     );
     await withHub(async (instance, store) => {
       await instance.registerCommands();
