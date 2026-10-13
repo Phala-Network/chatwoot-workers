@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-13
+
+### Added
+
+- The relay registers its guild commands within an hour of a deploy using its existing bot token.
+  Unchanged command payloads and configured forum channel ids make no Discord calls; failed registration
+  retries the next hour without delaying the support queue. The manual registration script remains available
+  for local setups.
+- Adding or moving a configured forum triggers registration even when commands are unchanged.
+  The registration hash now includes the sorted, de-duplicated forum channel ids, so the first deploy
+  with this hash format re-registers commands once.
+- Upgrading also registers 0.50.0's `/snooze` description and seven-day option; no manual registration
+  or new configuration or secrets are needed.
+
 ## [0.51.0] - 2026-10-13
 
 ### Added
@@ -969,7 +983,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.50.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.52.0...HEAD
+[0.52.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.51.0...chatwoot-discord-relay@0.52.0
+[0.51.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.50.0...chatwoot-discord-relay@0.51.0
 [0.50.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.49.1...chatwoot-discord-relay@0.50.0
 [0.45.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.1...chatwoot-discord-relay@0.45.0
 [0.44.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.0...chatwoot-discord-relay@0.44.1
