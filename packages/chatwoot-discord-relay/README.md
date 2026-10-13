@@ -238,8 +238,9 @@ and Discord reach each other.
    `https://<worker>/discord/interactions`. Discord verifies it with a signed request, so the
    Worker must be deployed first.
 2. Commands register themselves in every configured forum's server within an hour of a deploy,
-   using the Worker's bot token. Unchanged commands make no Discord calls; failures are logged and
-   retried the next hour. For local setups, the registration script remains available from a checkout
+   using the Worker's bot token. Adding or moving a configured forum also triggers registration.
+   Unchanged commands and forum channel ids make no Discord calls; failures are logged and retried
+   the next hour. For local setups, the registration script remains available from a checkout
    after `npm ci`:
    ```sh
    DISCORD_BOT_TOKEN=... npm run register-commands -- --application <app id> --guild <guild id>

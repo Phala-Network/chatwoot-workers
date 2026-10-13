@@ -12,7 +12,7 @@ import { CONVERSATIONS_PER_PAGE, chatwootClient } from "../../../shared/chatwoot
 import { parseJson } from "../../../shared/json.ts";
 import { errorFields, log } from "../../../shared/log.ts";
 import { retryDelay } from "../../../shared/store.ts";
-import { commandRegistrationPayload, registerGuildCommands } from "./commands/registration.ts";
+import { commandRegistrationHash, commandRegistrationPayload, registerGuildCommands } from "./commands/registration.ts";
 import { relaysInbox, type Settings } from "./config.ts";
 import { conversationStub } from "./conversation.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
@@ -106,20 +106,19 @@ export class Hub extends DurableObject<Env> {
   /** Updates guild commands on the hourly tick, independently of the sweep and support queue. */
   async registerCommands(): Promise<void> {
     try {
+      const settings = await loadSettings(this.env);
+      const forums = settings.config.accounts.map((account) => account.forumChannelId);
       const payload = commandRegistrationPayload();
-      // JSON.stringify uses the same property order as DiscordRest's request body.
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(payload)));
-      const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const hash = await commandRegistrationHash(payload, forums);
       if (this.store.get(COMMANDS_HASH_KEY) === hash) return;
 
-      const settings = await loadSettings(this.env);
       // This RPC has its own invocation budget; registration uses none of an alarm's requests
       // reserved for conversations (relay/limits.ts) or the support queue. Retries count too.
       const budget = new Budget(settings.config.relay.subrequestBudget);
       const rest = new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, budget.fetch);
       const application = await rest.get<RESTGetCurrentApplicationResult>(Routes.currentApplication());
       const guilds = new Set<string>();
-      for (const forumId of new Set(settings.config.accounts.map((account) => account.forumChannelId))) {
+      for (const forumId of new Set(forums)) {
         const channel = await rest.get<RESTGetAPIChannelResult>(Routes.channel(forumId));
         if (!("guild_id" in channel) || !channel.guild_id) throw new Error(`Forum ${forumId} has no guild`);
         guilds.add(channel.guild_id);

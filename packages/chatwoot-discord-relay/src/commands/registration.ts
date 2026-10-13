@@ -12,6 +12,16 @@ export function commandRegistrationPayload(): RESTPutAPIApplicationGuildCommands
   return COMMANDS;
 }
 
+/** Commands and their destinations; account order and shared forums do not change registration. */
+export async function commandRegistrationHash(
+  commands: RESTPutAPIApplicationGuildCommandsJSONBody,
+  forumChannelIds: readonly string[],
+): Promise<string> {
+  const forums = [...new Set(forumChannelIds)].sort();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ commands, forums })));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function registerGuildCommands(
   rest: DiscordRest,
   applicationId: string,

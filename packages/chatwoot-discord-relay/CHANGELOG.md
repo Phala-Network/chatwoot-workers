@@ -12,8 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The relay registers its guild commands within an hour of a deploy using its existing bot token.
-  Unchanged command payloads make no Discord calls; failed registration retries the next hour without
-  delaying the support queue. The manual registration script remains available for local setups.
+  Unchanged command payloads and configured forum channel ids make no Discord calls; failed registration
+  retries the next hour without delaying the support queue. The manual registration script remains available
+  for local setups.
+- Adding or moving a configured forum triggers registration even when commands are unchanged.
+  The registration hash now includes the sorted, de-duplicated forum channel ids, so the first deploy
+  with this hash format re-registers commands once.
 - Upgrading also registers 0.50.0's `/snooze` description and seven-day option; no manual registration
   or new configuration or secrets are needed.
 

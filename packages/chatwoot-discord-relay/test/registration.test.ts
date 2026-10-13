@@ -6,7 +6,7 @@ import {
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { commandRegistrationPayload } from "../src/commands/registration.ts";
+import { commandRegistrationHash, commandRegistrationPayload } from "../src/commands/registration.ts";
 import { Hub, hub } from "../src/hub.ts";
 import worker from "../src/index.ts";
 import { Store } from "../src/store.ts";
@@ -33,11 +33,6 @@ async function withHub(run: (instance: Hub, store: Store) => Promise<void>, conf
   );
 }
 
-async function payloadHash(body: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 afterEach(async () => {
   // The scheduled-handler test also requests a real sweep; let its empty pages finish.
   await vi.waitFor(async () => {
@@ -53,18 +48,54 @@ afterEach(async () => {
 });
 
 describe("guild command registration", () => {
-  it("makes no Discord calls when the exact payload's hash is unchanged", async () => {
+  it("makes no Discord calls when commands and forums are unchanged, regardless of order or duplicates", async () => {
+    const otherForum = "100000000000000056";
+    const config = testSettings({
+      accounts: [
+        { id: 3, name: "Acme", forumChannelId: otherForum },
+        { id: 1, name: "Globex", forumChannelId: FORUM },
+      ],
+    }).config;
     const { requests } = mockFetch();
     await withHub(async (instance, store) => {
-      const hash = await payloadHash(JSON.stringify(commandRegistrationPayload()));
+      const hash = await commandRegistrationHash(commandRegistrationPayload(), [FORUM, otherForum, FORUM]);
       store.set(HASH_KEY, hash);
       await instance.registerCommands();
       expect(requests).toEqual([]);
       expect(store.get(HASH_KEY)).toBe(hash);
-    });
+    }, config);
   });
 
-  it("overwrites once per guild, deduplicates forums, and stores the exact payload's hash after every PUT", async () => {
+  it("registers unchanged commands in every guild when a configured forum is added", async () => {
+    const otherForum = "100000000000000056";
+    const otherGuild = "100000000000000045";
+    const config = testSettings({
+      accounts: [
+        { id: 3, name: "Acme", forumChannelId: FORUM },
+        { id: 1, name: "Globex", forumChannelId: otherForum },
+      ],
+    }).config;
+    const { requests } = mockFetch(
+      application,
+      forum,
+      on("GET", `${API}/channels/${otherForum}`, () => json({ guild_id: otherGuild })),
+      on("PUT", new RegExp(`^${API}/applications/${APP}/guilds/\\d+/commands$`), () => json([])),
+    );
+    await withHub(async (instance, store) => {
+      const payload = commandRegistrationPayload();
+      store.set(HASH_KEY, await commandRegistrationHash(payload, [FORUM]));
+      await instance.registerCommands();
+      const puts = requests.filter(({ method }) => method === "PUT");
+      expect(puts.map(({ url }) => url.pathname)).toEqual([
+        `/api/v10/applications/${APP}/guilds/${GUILD}/commands`,
+        `/api/v10/applications/${APP}/guilds/${otherGuild}/commands`,
+      ]);
+      expect(puts.map(({ body }) => body)).toEqual([JSON.stringify(payload), JSON.stringify(payload)]);
+      expect(store.get(HASH_KEY)).toBe(await commandRegistrationHash(payload, [FORUM, otherForum]));
+    }, config);
+  });
+
+  it("overwrites once per guild, deduplicates forums, and stores the registration hash after every PUT", async () => {
     const otherForum = "100000000000000056";
     const thirdForum = "100000000000000057";
     const otherGuild = "100000000000000045";
@@ -103,7 +134,12 @@ describe("guild command registration", () => {
       const puts = requests.filter(({ method }) => method === "PUT");
       const body = JSON.stringify(commandRegistrationPayload());
       expect(puts.map(({ body }) => body)).toEqual([body, body]);
-      expect(store.get(HASH_KEY)).toBe(await payloadHash(body));
+      expect(store.get(HASH_KEY)).toBe(
+        await commandRegistrationHash(
+          commandRegistrationPayload(),
+          config.accounts.map(({ forumChannelId }) => forumChannelId),
+        ),
+      );
       expect(requests.every(({ headers }) => headers.get("authorization") === "Bot test-bot-token")).toBe(true);
     }, config);
   });
@@ -134,7 +170,12 @@ describe("guild command registration", () => {
       fail = false;
       await instance.registerCommands();
       expect(requests.filter(({ method }) => method === "PUT")).toHaveLength(4);
-      expect(store.get(HASH_KEY)).toBe(await payloadHash(JSON.stringify(commandRegistrationPayload())));
+      expect(store.get(HASH_KEY)).toBe(
+        await commandRegistrationHash(
+          commandRegistrationPayload(),
+          config.accounts.map(({ forumChannelId }) => forumChannelId),
+        ),
+      );
     }, config);
   });
 
