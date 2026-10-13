@@ -555,7 +555,9 @@ export function toRelayMessage(
 ): RelayMessage {
   const inlineImages = inlineEmailImages(message, context.chatwootBaseUrl);
   const attachments = (message.attachments ?? []).flatMap(toRelayAttachment);
-  const seenFileUrls = new Set(attachments.flatMap((attachment) => (attachment.type === "file" ? [attachment.url] : [])));
+  const seenFileUrls = new Set(
+    attachments.flatMap((attachment) => (attachment.type === "file" ? [attachment.url] : [])),
+  );
   for (const url of inlineImages) {
     if (seenFileUrls.has(url)) continue;
     seenFileUrls.add(url);

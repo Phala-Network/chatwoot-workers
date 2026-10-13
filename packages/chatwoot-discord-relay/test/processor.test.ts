@@ -808,6 +808,35 @@ describe("processConversation", () => {
     });
   });
 
+  it("relays an Outlook inline image that exists only in html_content.full", async () => {
+    const image = "https://chatwoot.example.com/rails/active_storage/blobs/redirect/outlook/inline.png";
+    const cid = "image002.png@outlook.example";
+    const world = new World();
+    world.messages = [
+      {
+        id: 1,
+        content: `Screenshot: [cid:${cid}]`,
+        message_type: 0,
+        content_attributes: {
+          email: {
+            subject: "FW: Screenshot",
+            multipart: true,
+            text_content: { quoted: `Screenshot: [cid:${cid}]` },
+            html_content: {
+              quoted: `Screenshot: [cid:${cid}]`,
+              full: `<html><body><p>Screenshot:</p><img src="${image}"></body></html>`,
+            },
+          },
+        },
+        attachments: [],
+      },
+    ];
+    await withStore(async (store) => {
+      await sync(store, testSettings());
+      expect(world.replies()).toEqual([`Screenshot:\n📎 ${image}`, CALL]);
+    });
+  });
+
   it("pings linked agents mentioned in private notes by their Chatwoot user id", async () => {
     const world = new World();
     world.messages = [
