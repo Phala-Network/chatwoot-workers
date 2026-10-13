@@ -65,12 +65,12 @@
     "prepack": "npm run build:package"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "2.0.0-beta.sha-805ec1ff3"
+    "@cloudflare/vite-plugin": "2.0.0-beta.sha-91c870c02"
   },
   "dependencies": {
     "discord-api-types": "^0.38.56",
     "discord-interactions": "^4.4.0",
-    "hono": "^4.13.10",
+    "hono": "^4.13.13",
     "jsonc-parser": "^3.3.1",
     "openapi-fetch": "^0.17.0",
     "zod": "^4.6.5"

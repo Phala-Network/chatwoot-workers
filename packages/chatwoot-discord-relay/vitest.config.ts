@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 // A throwaway Ed25519 key pair per run: the Worker verifies with the public key, tests sign
@@ -23,7 +23,7 @@ export default defineConfig({
       miniflare: {
         // Keep in step with cloudflare.config.ts.
         compatibilityDate: "2026-08-15",
-        // Required by @cloudflare/vitest-pool-workers (the Worker itself does not need it).
+        // Required by @cloudflare/vitest-plugin (the Worker itself does not need it).
         compatibilityFlags: ["nodejs_compat"],
         durableObjects: {
           HUB: { className: "Hub", useSQLite: true },
