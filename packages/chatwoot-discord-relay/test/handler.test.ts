@@ -273,6 +273,18 @@ describe("interaction handler", () => {
     const menuCommands = COMMANDS.filter((command) => command.type === 3);
     expect(menuCommands.map((command) => command.name)).toEqual([REPLY_WITH_THIS]);
     expect(menuCommands[0]).not.toHaveProperty("description");
+    expect(COMMANDS.find((command) => command.name === "snooze")).toMatchObject({
+      description: "Snooze the conversation (default: 7 days)",
+      options: [
+        {
+          name: "until",
+          choices: [
+            { name: "For 7 days", value: "seven_days_from_now" },
+            { name: "Until an hour from now", value: "an_hour_from_now" },
+          ],
+        },
+      ],
+    });
   });
 
   it("submitting a reply defers a job that sends as the invoker, answering only a failure", async () => {
@@ -374,17 +386,20 @@ describe("interaction handler", () => {
     expect(privateText(await handleInteraction(interaction({ name: "labels" }), deps))).toBe("Unknown command.");
   });
 
-  it("/snooze defaults to the next reply and computes 'an hour from now' when it is used", async () => {
-    expect((await handleInteraction(interaction({ name: "snooze" }), deps)).job?.action).toEqual({
-      type: "status",
-      status: "snoozed",
-    });
-    const until = (value: string) =>
-      handleInteraction(interaction({ name: "snooze", options: [{ name: "until", type: 3, value }] }), deps);
-    expect((await until("until_next_reply")).job?.action).toEqual({ type: "status", status: "snoozed" });
-
+  it("/snooze defaults to seven days and computes both durations when it is used, in whole Unix seconds", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-27T16:30:45.900Z"));
+    const sevenDays = {
+      type: "status",
+      status: "snoozed",
+      snoozedUntil: Date.parse("2026-10-04T16:30:45Z") / 1000,
+    };
+    expect((await handleInteraction(interaction({ name: "snooze" }), deps)).job?.action).toEqual(sevenDays);
+    const until = (value: string) =>
+      handleInteraction(interaction({ name: "snooze", options: [{ name: "until", type: 3, value }] }), deps);
+    expect((await until("seven_days_from_now")).job?.action).toEqual(sevenDays);
+    // Commands registered before the upgrade also get a wake time.
+    expect((await until("until_next_reply")).job?.action).toEqual(sevenDays);
     expect((await until("an_hour_from_now")).job?.action).toEqual({
       type: "status",
       status: "snoozed",
@@ -496,7 +511,6 @@ describe("ticket buttons and the Manage panel", () => {
     expect(manage.job?.action).toEqual({ type: "panel" });
     expect(manage.job).not.toHaveProperty("panel");
     expect(manage.job).not.toHaveProperty("quiet");
-    expect((await press("ticket:snooze")).job?.action).toEqual({ type: "status", status: "snoozed" });
   });
 
   it("Assign to shows a menu of agents; choosing one turns the menu into the result", async () => {
@@ -536,8 +550,22 @@ describe("ticket buttons and the Manage panel", () => {
     const resolve = await press("panel:status:resolved");
     expect(resolve.response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate });
     expect(resolve.job).toMatchObject({ action: { type: "status", status: "resolved" }, panel: true });
-    expect((await press("panel:status:until_next_reply")).job?.action).toEqual({ type: "status", status: "snoozed" });
   });
+
+  it.each(["ticket:snooze", "panel:status:seven_days_from_now", "panel:status:until_next_reply"])(
+    "%s snoozes for seven days, including a Manage panel opened before the upgrade",
+    async (customId) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-31T16:30:45.900Z"));
+      const { job } = await press(customId);
+      expect(job?.action).toEqual({
+        type: "status",
+        status: "snoozed",
+        snoozedUntil: Date.parse("2026-11-07T16:30:45Z") / 1000,
+      });
+      if (customId.startsWith("panel:")) expect(job?.panel).toBe(true);
+    },
+  );
 
   it("the label menu gives the ticket one label, or none", async () => {
     expect((await press("panel:labels", ["billing"])).job?.action).toEqual({ type: "labels", labels: ["billing"] });

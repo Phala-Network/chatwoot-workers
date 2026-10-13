@@ -482,7 +482,7 @@ describe("executeCommand", () => {
           "### Acme #15 · Jane <\u200b@123>",
           [["43"]],
           [["vip"]],
-          ["panel:status:open*", "panel:status:resolved", "panel:status:until_next_reply"],
+          ["panel:status:open*", "panel:status:resolved", "panel:status:seven_days_from_now"],
         ],
       });
     });

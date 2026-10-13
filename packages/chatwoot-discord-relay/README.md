@@ -260,7 +260,7 @@ while the note itself stays in the post. Then a row of buttons per concern:
 1. Answering: **Write reply**, led by **Reply with draft** (highlighted) after a triage bot's
    answer with a draft.
 2. Who owns the ticket: **Take**, and **Assign to…**, named after the assignee once there is one.
-3. Its state: **Resolve** and **Snooze** while it is open or pending; **Reopen** and **Resolve**
+3. Its state: **Resolve** and **Snooze 7 days** while it is open or pending; **Reopen** and **Resolve**
    while it is snoozed; **Reopen** once it is resolved; then **Block** and **Manage**.
 
 The card is edited when the ticket changes (at once after a button or command), and moves to the
@@ -279,7 +279,7 @@ commands work everywhere.
 | `/note [message] [attachment]` | | Like `/reply`, for a private note. |
 | `/resolve`, `/reopen` | **Resolve**, **Reopen** | Change the status. |
 | `/pending` | | Hand back to the inbox bot; ordinary pending status when no bot is linked. |
-| `/snooze [until]` | **Snooze** | Snooze until the next reply (default, and the button) or for an hour. A reply from the contact always reopens it. |
+| `/snooze [until]` | **Snooze 7 days** | Snooze for 7 days (default, and the button) or for an hour. The card shows when it wakes. A reply from the customer reopens it early. |
 | `/priority <level>` | | Set the priority (`Urgent`, `High`, `Medium`, `Low`), or clear it with `None`. |
 | `/assign [agent]` | **Take**, **Assign to…** | Assign to yourself (**Take**) or another linked Discord user, who must be an agent of the account. **Assign to…** shows you a menu of the account's agents (and Unassigned), and the menu turns into the result. |
 | `/unassign` | | Remove the assignee, like choosing "None" as the assignee in Chatwoot. |
@@ -288,12 +288,12 @@ commands work everywhere.
 | `/unblock` | | Like Chatwoot's "Unblock contact": their new messages are posted again (messages received while blocked are not). The status is unchanged. |
 | | **Manage** | A card only you see, to change the assignee, the label, and the status (below). |
 
-![The Manage card: menus for the assignee and the label, and Open, Resolved, and Snooze buttons with the current status highlighted](https://raw.githubusercontent.com/Phala-Network/chatwoot-workers/main/packages/chatwoot-discord-relay/docs/assets/manage.png)
+![The Manage card: menus for the assignee and the label, and Open, Resolved, and Snooze 7 days buttons with the current status highlighted](https://raw.githubusercontent.com/Phala-Network/chatwoot-workers/main/packages/chatwoot-discord-relay/docs/assets/manage.png)
 
 **Manage** opens a card only you see, drawn with the ticket as it is and coloured by its status:
 menus for its assignee and its label (the card sets the one topic label: choosing one replaces
-the ticket's labels except its [kinds](#routing)), and **Open**, **Resolved**, and **Snooze** (until
-the next reply) buttons with the current status highlighted. A change is made at once, and the
+the ticket's labels except its [kinds](#routing)), and **Open**, **Resolved**, and **Snooze 7 days**
+buttons with the current status highlighted. A change is made at once, and the
 card is drawn again with the result; a change someone else makes shows the next time it is
 drawn. A menu lists at most 25 choices (the current assignee and label among them; a label
 longer than a menu option can be is named in the menu's placeholder instead, and changed in
@@ -413,7 +413,8 @@ asked (a Discord timestamp each reader sees as relative, "3 hours ago"), and its
 ticket with no assignee pings `queue.escalationRoleId` (or `escalationUserId`) after its customer
 has waited 1, 2, 4, 8, and 16 hours, and every 24 hours after that, once per step, until someone
 takes it or replies. Snoozed tickets (with when they wake, if snoozed until a time) and pending bot turns are listed after them, marked 💤 and 🤖 respectively,
-without pings or escalations. Pending age uses the existing `waiting_since`; it is not the current turn's start.
+without pings or escalations. Once Chatwoot wakes a snoozed ticket, it is treated like any other open ticket:
+the normal counts, pings, and escalation rules apply. Pending age uses the existing `waiting_since`; it is not the current turn's start.
 Nothing is posted when there is no such ticket. A line holds no customer text, and mentions are
 allowed from the tickets' fields only, never from text. The queue reads up to four pages (100
 tickets) of open tickets, one page (25) of snoozed and one page of pending per account and takes at most four

@@ -130,7 +130,7 @@ const STATUS_NAMES: Record<string, string> = {
  * how to reach the customer, and a link to Chatwoot; the status, assignee, and labels), then a
  * row of buttons per concern. Answering: Write reply, led by Reply with draft when `answerId` is a triage bot
  * answer with a draft. Who owns the ticket: Take, and Assign to (named after the assignee), which
- * shows a menu of agents. Its state: Resolve and Snooze until the next reply, or Reopen, as its
+ * shows a menu of agents. Its state: Resolve and Snooze 7 days, or Reopen, as its
  * status allows, then Block and Manage. Only the first button is coloured; the others are told
  * apart by their emoji, which a coloured button would hide.
  */
@@ -159,7 +159,7 @@ export function ticketCard(ticket: CardTicket, answerId?: string): APIMessageTop
       ? [reopen]
       : ticket.status === "snoozed"
         ? [reopen, resolve]
-        : [resolve, button(BUTTONS.snooze, "Snooze", "😴")];
+        : [resolve, button(BUTTONS.snooze, "Snooze 7 days", "😴")];
   return [
     {
       type: ComponentType.Container,
@@ -236,11 +236,11 @@ export interface TicketState {
   status: string;
 }
 
-/** The panel's statuses, with the value each button sets: "Snooze" snoozes until the next reply. */
+/** The panel's statuses, with the value each button sets: "Snooze 7 days" sets a wake time. */
 const STATUSES: Array<[status: string, value: string, name: string, emoji: string]> = [
   ["open", "open", "Open", "🟢"],
   ["resolved", "resolved", "Resolved", "✅"],
-  ["snoozed", "until_next_reply", "Snooze", "😴"],
+  ["snoozed", "seven_days_from_now", "Snooze 7 days", "😴"],
 ];
 
 /**

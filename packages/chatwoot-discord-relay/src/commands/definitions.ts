@@ -20,11 +20,11 @@ const LABEL_MAX = 100;
 export const PRIORITY_NAMES = { none: "None", urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
 
 /**
- * The dashboard's snooze options (SNOOZE_OPTIONS in dashboard/constants/globals.js at v4.18.0)
- * that do not depend on the agent's time zone. The others reopen at 9 AM in the browser's time
- * zone, which an interaction does not carry.
+ * Relative snooze durations, capped at seven days. Chatwoot's "an hour from now" option
+ * (SNOOZE_OPTIONS in dashboard/constants/globals.js at v4.18.0) does not depend on the agent's
+ * time zone; its other timed options reopen at 9 AM in the browser's time zone, which an interaction does not carry.
  */
-const SNOOZE_NAMES = { until_next_reply: "Until next reply", an_hour_from_now: "Until an hour from now" };
+const SNOOZE_NAMES = { seven_days_from_now: "For 7 days", an_hour_from_now: "Until an hour from now" };
 
 const slash = ApplicationCommandType.ChatInput;
 
@@ -58,7 +58,7 @@ export const COMMANDS: RESTPutAPIApplicationGuildCommandsJSONBody = [
   {
     type: slash,
     name: "snooze",
-    description: "Snooze the conversation (default: until the next reply)",
+    description: "Snooze the conversation (default: 7 days)",
     options: [
       {
         type: ApplicationCommandOptionType.String,
