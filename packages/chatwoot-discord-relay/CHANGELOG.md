@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-10-13
+
+### Added
+
+- Incoming email messages relay inline images that Chatwoot stored under its own Active Storage URL;
+  duplicate attachment URLs and third-party tracking images are ignored, and relayed `[cid:…]` placeholders
+  are removed from the customer text.
+- Incoming messages longer than `relay.maxChunks` keep their complete body as a UTF-8 `message.txt` upload on
+  the truncation note. If Discord refuses the upload, the note falls back to the Chatwoot link.
+
+### Changed
+
+- The minimum `relay.subrequestBudget` is now `relay.maxChunks` + 34 to reserve the long-message upload fallback.
+
 ## [0.50.0] - 2026-10-13
 
 ### Changed

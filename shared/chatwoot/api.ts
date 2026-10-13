@@ -104,7 +104,7 @@ const emailSchema = z.object({
   subject: text,
   auto_reply: z.boolean().nullish(),
   text_content: z.object({ quoted: text }).nullish().catch(null),
-  html_content: z.object({ quoted: text }).nullish().catch(null),
+  html_content: z.object({ quoted: text, full: text }).nullish().catch(null),
 });
 
 const messageSchema = z.object({
@@ -546,23 +546,32 @@ export function toRelayMessage(
   message: ChatwootMessage,
   context: {
     account: { id: number; name: string };
+    chatwootBaseUrl?: string;
     inboxName?: string | null;
     conversation: RelayConversation;
     mentionedAgents?: ReadonlyMap<number, string>;
     discordAvatarUrl?: string;
   },
 ): RelayMessage {
+  const inlineImages = inlineEmailImages(message, context.chatwootBaseUrl);
+  const attachments = (message.attachments ?? []).flatMap(toRelayAttachment);
+  const seenFileUrls = new Set(attachments.flatMap((attachment) => (attachment.type === "file" ? [attachment.url] : [])));
+  for (const url of inlineImages) {
+    if (seenFileUrls.has(url)) continue;
+    seenFileUrls.add(url);
+    attachments.push({ type: "file", url });
+  }
   return {
     id: message.id,
     createdAt: message.created_at ?? null,
     messageType: MESSAGE_TYPES[message.message_type] ?? "template",
     private: message.private ?? false,
     deleted: message.content_attributes?.deleted === true,
-    content: messageContent(message),
+    content: messageContent(message, inlineImages.length > 0),
     emailSubject: message.content_attributes?.email?.subject ?? null,
     autoReply: message.content_attributes?.email?.auto_reply === true,
     answers: isAnsweringReply(message),
-    attachments: (message.attachments ?? []).flatMap(toRelayAttachment),
+    attachments,
     items: ITEM_CONTENT_TYPES.has(message.content_type ?? "") ? toRelayItems(message.content_attributes?.items) : [],
     sender: message.sender
       ? {
@@ -585,9 +594,41 @@ export function toRelayMessage(
  * What Chatwoot itself shows and forwards (Message#ensure_processed_message_content, used by its
  * Slack integration at v4.18.0): for an email, the reply without its quoted history.
  */
-export function messageContent(message: ChatwootMessage): string {
+export function messageContent(message: ChatwootMessage, dropCidPlaceholders = false): string {
   const email = message.content_attributes?.email;
-  return email?.text_content?.quoted ?? email?.html_content?.quoted ?? message.content ?? "";
+  const content = email?.text_content?.quoted ?? email?.html_content?.quoted ?? message.content ?? "";
+  return dropCidPlaceholders ? content.replace(/\[cid:[^\]\r\n]+\]/gi, "") : content;
+}
+
+/**
+ * Inline email images are stored by Chatwoot in Active Storage but are not message attachments.
+ * Only URLs on the configured Chatwoot origin are safe to relay; external images include tracking
+ * pixels and logos which must stay out of the customer message.
+ */
+function inlineEmailImages(message: ChatwootMessage, baseUrl: string | undefined): string[] {
+  if (message.message_type !== 0) return [];
+  const html = message.content_attributes?.email?.html_content?.full;
+  if (!html || !baseUrl) return [];
+
+  let origin: string;
+  try {
+    origin = new URL(baseUrl).origin;
+  } catch {
+    return [];
+  }
+
+  const urls = new Set<string>();
+  const imageTag = /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+  for (const match of html.matchAll(imageTag)) {
+    const source = (match[1] ?? match[2] ?? match[3] ?? "").replace(/&amp;/gi, "&");
+    try {
+      const url = new URL(source, baseUrl);
+      if (url.origin === origin && url.pathname.startsWith("/rails/active_storage/")) urls.add(url.href);
+    } catch {
+      // A malformed image URL does not make the message invalid.
+    }
+  }
+  return [...urls];
 }
 
 function toRelayAttachment(attachment: z.infer<typeof attachmentSchema>): RelayAttachment[] {

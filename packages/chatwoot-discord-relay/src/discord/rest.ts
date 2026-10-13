@@ -118,7 +118,9 @@ export class DiscordRest {
     const url = `${API_BASE}${path}${query.size > 0 ? `?${query.toString()}` : ""}`;
     const headers = new Headers({ "user-agent": USER_AGENT });
     if (request.auth !== false) headers.set("authorization", `Bot ${this.token}`);
-    if (request.body !== undefined) headers.set("content-type", "application/json");
+    if (request.body !== undefined && !(request.body instanceof FormData)) {
+      headers.set("content-type", "application/json");
+    }
 
     for (let attempt = 1; ; attempt += 1) {
       const wait = Math.max(this.globalReset, this.resets.get(this.bucketKey(route, path)) ?? 0) - Date.now();
@@ -134,7 +136,9 @@ export class DiscordRest {
           // Never followed: a redirect could carry the bot token elsewhere, and each hop would be
           // a subrequest the budget does not count.
           redirect: "manual",
-          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+          ...(request.body === undefined
+            ? {}
+            : { body: request.body instanceof FormData ? request.body : JSON.stringify(request.body) }),
         }),
       );
       const text = await response.text();

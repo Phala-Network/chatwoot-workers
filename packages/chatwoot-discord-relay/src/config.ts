@@ -92,7 +92,7 @@ export const configSchema = z
         startAfterMessageId: z.number().int().min(0).default(0),
         /** A message that fails this many times is skipped with a notice in its post. */
         maxAttempts: z.number().int().min(1).default(5),
-        /** Outbound requests per Durable Object alarm run (the Workers Free limit is 50). */
+        /** Outbound requests per Durable Object alarm run (the Workers Free limit is 50). Long-text upload fallback is reserved. */
         subrequestBudget: z.number().int().min(20).max(1000).default(45),
       })
       .prefault({}),

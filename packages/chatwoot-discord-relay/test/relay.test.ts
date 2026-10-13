@@ -447,15 +447,37 @@ describe("Relay", () => {
     expect(forum.calls).toHaveLength(posted);
   });
 
-  it("caps very long messages with a link to the full text", async () => {
+  it("attaches the full text of a very long customer message", async () => {
     const text = `${"x".repeat(1900)}\n`.repeat(10);
     await relay.relay(message({ content: text }));
     const replies = forum.contents().slice(1);
     expect(replies).toHaveLength(5);
     expect(replies.every((content) => content.length <= CONTENT_LIMIT)).toBe(true);
-    expect(replies.at(-1)).toBe(
-      `-# Message truncated (${text.trim().length} characters). Full text: <https://chatwoot.example.com/app/accounts/3/conversations/12>`,
+    expect(replies.at(-1)).toBe(`-# Message truncated (${text.trim().length} characters). Full text attached.`);
+    const upload = forum.calls.at(-1)?.[1].files?.[0];
+    expect(upload?.filename).toBe("message.txt");
+    expect(await upload?.blob.text()).toBe(text.trim());
+  });
+
+  it("attaches the complete 38,000-character customer body as UTF-8 message.txt", async () => {
+    const text = "客户".repeat(19_000);
+    await relay.relay(message({ content: text }));
+    const note = forum.calls.at(-1)?.[1];
+    expect(note?.content).toBe("-# Message truncated (38000 characters). Full text attached.");
+    const file = note?.files?.[0];
+    expect(file?.filename).toBe("message.txt");
+    expect(file?.blob.type).toBe("text/plain;charset=utf-8");
+    expect(await file?.blob.text()).toBe(text);
+  });
+
+  it("falls back to the Chatwoot link when the full-text upload is refused", async () => {
+    forum.failFiles = true;
+    const text = "x".repeat(20_000);
+    await relay.relay(message({ content: text }));
+    expect(forum.contents().at(-1)).toBe(
+      `-# Message truncated (${text.length} characters). Full text: <https://chatwoot.example.com/app/accounts/3/conversations/12>`,
     );
+    expect(forum.calls.at(-1)?.[1].files).toBeUndefined();
   });
 
   it("mutes blocked contacts but still posts activity", async () => {
@@ -775,7 +797,8 @@ describe("Relay", () => {
     const replies = forum.contents().slice(1);
     expect(replies).toHaveLength(3);
     expect(replies[1]?.endsWith("\n-# <@592>")).toBe(true);
-    expect(replies[2]).toMatch(/^-# Message truncated/);
+    expect(replies[2]).toMatch(/^-# Message truncated .*Full text attached\.$/);
+    expect(forum.calls.at(-1)?.[1].files?.[0]?.filename).toBe("message.txt");
   });
 
   it("pings linked agents mentioned in a private note, where they are mentioned", async () => {

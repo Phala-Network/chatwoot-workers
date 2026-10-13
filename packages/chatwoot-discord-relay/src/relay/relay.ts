@@ -31,7 +31,15 @@ import {
 } from "./format.ts";
 import { assignedLine, assigneeKey, Notifier, type TriageOptions, triageLine } from "./notify.ts";
 
-export type WebhookMessage = RESTPostAPIWebhookWithTokenJSONBody;
+export interface WebhookFile {
+  blob: Blob;
+  filename: string;
+}
+
+export type WebhookMessage = RESTPostAPIWebhookWithTokenJSONBody & {
+  /** Files are encoded as multipart fields by DiscordForum; this internal field is never JSON. */
+  files?: ReadonlyArray<WebhookFile>;
+};
 type MessageComponents = NonNullable<WebhookMessage["components"]>;
 
 /** Thrown by a ForumClient when a post no longer exists in Discord (e.g. it was deleted). */
@@ -566,12 +574,17 @@ export class Relay {
       };
     });
     if (chunks.length > maxChunks) {
-      const link = conversationUrl(frontendUrl, message.account.id, message.conversation.id);
+      const fullText = message.messageType === "incoming";
       parts.push({
-        content: `-# Message truncated (${charLength(text)} characters). Full text: <${link}>`,
+        content: fullText
+          ? `-# Message truncated (${charLength(text)} characters). Full text attached.`
+          : `-# Message truncated (${charLength(text)} characters). Full text: <${conversationUrl(frontendUrl, message.account.id, message.conversation.id)}>`,
         username,
         avatar_url: avatar,
         allowed_mentions: { parse: [] },
+        ...(fullText
+          ? { files: [{ blob: new Blob([text], { type: "text/plain;charset=utf-8" }), filename: "message.txt" }] }
+          : {}),
       });
     }
     return parts;
@@ -592,11 +605,28 @@ export class Relay {
     for (let part = posted.length; part < parts.length; part += 1) {
       const payload = parts[part];
       if (!payload) break;
-      const { messageId } = await forum.execute(forumChannelId, payload, threadId);
+      let sent: { channelId: string; messageId: string };
+      try {
+        sent = await forum.execute(forumChannelId, payload, threadId);
+      } catch (error) {
+        // An upload can be refused because of Discord's file limits even when its text fits. A
+        // customer message must still be visible, so retry only the note without its file and use
+        // the pre-0.51 link wording. Unknown threads are handled by the caller, not as upload
+        // failures.
+        if (!payload.files?.length || error instanceof UnknownThreadError) throw error;
+        const fallback = { ...payload, content: this.truncationNote(message) };
+        delete fallback.files;
+        sent = await forum.execute(forumChannelId, fallback, threadId);
+      }
+      const { messageId } = sent;
       store.savePostedPart(accountId, conversationId, message.id, part, messageId);
       store.updateConversation(accountId, conversationId, { cardCovered: 1 });
       if (fromCustomer && part === 0) this.customerWrote(accountId, conversationId, messageId);
     }
+  }
+
+  private truncationNote(message: RelayMessage): string {
+    return `-# Message truncated (${charLength(body(message))} characters). Full text: <${conversationUrl(this.options.frontendUrl, message.account.id, message.conversation.id)}>`;
   }
 
   /**

@@ -156,12 +156,18 @@ export class FakeForum implements ForumClient {
   failAfter: number | undefined;
   /** Posts the next message into a thread but loses Discord's answer. */
   loseAnswer = false;
+  /** Fails the next multipart file post, so the relay can exercise its text-only fallback. */
+  failFiles = false;
   /** Fails the next request that archives a post. */
   failArchive = false;
 
   constructor(public guildId = "100000000000000044") {}
 
   async execute(_forum: string, payload: WebhookMessage, threadId?: string) {
+    if (threadId && payload.files?.length && this.failFiles) {
+      this.failFiles = false;
+      throw new Error("Discord rejected the file upload");
+    }
     if (threadId && this.failAfter !== undefined) {
       if (this.failAfter === 0) {
         this.failAfter = undefined;

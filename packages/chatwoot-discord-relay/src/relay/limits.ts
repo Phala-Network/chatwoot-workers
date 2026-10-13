@@ -18,8 +18,10 @@ export const PAGE_REQUESTS = 1;
  * lookup again, the ticket header, and the header again with the tags looked up again; a failed attempt into a post
  * deleted in Discord; the truncation note; the notice when the message is skipped; adding a new assignee its
  * assignment line pings to the post; and what its state adds (a customer's response or a delivery failure, see relay/updates.ts).
+ * A long incoming message also reserves one retry for a failed message.txt upload and its
+ * truncation-note fallback.
  */
-const MESSAGE_REQUESTS = 16;
+const MESSAGE_REQUESTS = 17;
 
 /**
  * After the messages: the notice that pings a new assignee and adding them to the post; linking
