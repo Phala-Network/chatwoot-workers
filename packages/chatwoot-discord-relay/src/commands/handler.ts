@@ -115,7 +115,7 @@ function command(context: Context, interaction: APIApplicationCommandInteraction
     case "pending":
       return defer(context, { type: "status", status: "pending" });
     case "snooze":
-      return snooze(context, stringOption(interaction, "until") ?? "until_next_reply", Date.now());
+      return snooze(context, stringOption(interaction, "until") ?? "seven_days_from_now", Date.now());
     case "priority": {
       const level = stringOption(interaction, "level");
       if (level === "none") return defer(context, { type: "priority", priority: null });
@@ -147,12 +147,18 @@ function command(context: Context, interaction: APIApplicationCommandInteraction
 /**
  * The snooze time as Chatwoot's dashboard computes it (findSnoozeTime in
  * dashboard/helper/snoozeHelpers.js at v4.18.0): Unix seconds, taken when the command is used.
- * "Until next reply" sends no time.
+ * Seven days uses the same relative duration calculation as "an hour from now".
  */
 function snooze(context: Context, option: string, now: number): HandlerResult {
   switch (option) {
+    // Older registered commands and Manage panels still send this value; cap them too.
     case "until_next_reply":
-      return defer(context, { type: "status", status: "snoozed" });
+    case "seven_days_from_now":
+      return defer(context, {
+        type: "status",
+        status: "snoozed",
+        snoozedUntil: Math.floor((now + 7 * 24 * HOUR) / 1000),
+      });
     case "an_hour_from_now":
       return defer(context, { type: "status", status: "snoozed", snoozedUntil: Math.floor((now + HOUR) / 1000) });
     default:
@@ -416,7 +422,7 @@ async function component(context: Context, interaction: APIMessageComponentInter
     case BUTTONS.reopen:
       return defer(context, { type: "status", status: "open" });
     case BUTTONS.snooze:
-      return snooze(context, "until_next_reply", Date.now());
+      return snooze(context, "seven_days_from_now", Date.now());
     case BUTTONS.block:
       return {
         response: {

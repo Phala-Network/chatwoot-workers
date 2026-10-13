@@ -152,6 +152,33 @@ describe("support queue", () => {
     expect(posted(requests)).toEqual([]);
   });
 
+  it("counts, pings and escalates timed snoozes as Open tickets after Chatwoot wakes them", async () => {
+    const tickets: Open[] = [
+      { id: 1, waiting: 2, snoozed: true, wakes: 7 * 24, assignee: { id: 42, name: "Alice" } },
+      { id: 2, waiting: 3, snoozed: true, wakes: 7 * 24 },
+    ];
+    const { requests } = world(tickets);
+    const ctx = context();
+    await postQueue(ctx, NOW * 1000);
+    const [snoozed] = posted(requests);
+    expect(snoozed.content).toContain("0 waiting · 0 unassigned");
+    expect(snoozed.content).toContain(`⏰ wakes <t:${NOW + 7 * 24 * HOUR}:R>`);
+    expect(snoozed.allowed_mentions).toEqual({ parse: [], users: [], roles: [] });
+
+    // Chatwoot clears the snooze and returns these conversations in its Open list.
+    for (const ticket of tickets) {
+      ticket.snoozed = false;
+      delete ticket.wakes;
+    }
+    await postQueue(ctx, (NOW + 7 * 24 * HOUR) * 1000);
+    const [, woken] = posted(requests);
+    expect(woken.content).toContain("2 waiting · 1 unassigned");
+    expect(woken.content).toContain("🔔 [Acme #2]");
+    expect(woken.content).toContain(`<@${ALICE}>`);
+    expect(woken.content).not.toMatch(/💤|⏰ wakes/);
+    expect(woken.allowed_mentions).toEqual({ parse: [], users: [ALICE], roles: [ROLE] });
+  });
+
   it("hands a rate limit back to its job instead of waiting it out, so the job checks the deadline first", async () => {
     const { requests } = world([{ id: 1, waiting: 3 }], { rateLimit: true });
     await expect(postQueue(context(), NOW * 1000)).rejects.toMatchObject({ status: 429 });

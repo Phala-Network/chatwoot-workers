@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-10-13
+
+### Changed
+
+- **Snooze 7 days** on the ticket card and Manage panel, and `/snooze` by default, now set a wake time seven days
+  from the command instead of waiting indefinitely for the next reply. A customer reply still reopens the ticket
+  early, and the one-hour option remains. The card and support queue show when it wakes; once Open, normal queue
+  pings and escalations resume. Older registered commands and Manage panels also use the seven-day limit.
+- Upgrade: deploy the relay and re-register its guild commands to update `/snooze`'s description and choices.
+  Existing snoozed tickets are unchanged; snooze them again to give them a wake time.
+
 ## [0.49.1] - 2026-10-07
 
 ### Changed
@@ -944,7 +955,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.45.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.50.0...HEAD
+[0.50.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.49.1...chatwoot-discord-relay@0.50.0
 [0.45.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.1...chatwoot-discord-relay@0.45.0
 [0.44.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.44.0...chatwoot-discord-relay@0.44.1
 [0.44.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.43.1...chatwoot-discord-relay@0.44.0
