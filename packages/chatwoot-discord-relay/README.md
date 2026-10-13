@@ -76,6 +76,9 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
   its sender's name (customers, agents, 🔒 private notes, activity lines), and it ends with the ticket's card:
   status, assignee and labels, how long the customer has waited for a reply and, when snoozed until a time, when it wakes, with buttons. Forum tags follow the conversation (account, status, assignee,
   topic, priority, labels); resolved posts are archived. [How conversations are relayed](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/relay.md) has the details.
+- Email inline images that Chatwoot stores under its own Active Storage URL are shown as image attachment links; duplicate
+  attachment URLs and third-party tracking images are ignored. Customer messages longer than `relay.maxChunks` keep
+  their complete body in a `message.txt` upload on the truncation note when Discord accepts it.
 - **Work from the post.** The card's buttons and [commands](#commands-and-buttons) run in Chatwoot with the
   agent's own access token, so Chatwoot's permissions and audit trail apply. Talking in a post never reaches the
   customer; only commands do.
@@ -339,12 +342,12 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `triage.name` | 1–100 characters | `Triage bot` | Name used in budget notes. |
 | `triage.perConversationPerHour` | integer ≥ 1 | `5` | Calls of the triage bot per conversation each hour. |
 | `triage.perHour` | integer ≥ 1 | `30` | Calls of the triage bot in total each hour. |
-| `relay.maxChunks` | integer 1–10 | `4` | Discord messages per Chatwoot message before truncation. |
+| `relay.maxChunks` | integer 1–10 | `4` | Discord messages per Chatwoot message before truncation. Incoming customer messages that exceed this limit include the complete UTF-8 body as `message.txt` on the truncation note when Discord accepts the upload. |
 | `relay.topicAttribute` | non-empty string | `topic` | Conversation custom attribute used as a topic tag. |
 | `relay.linkAttribute` | string | `discord_thread` | Conversation custom attribute that receives the post URL (`""` disables it). |
 | `relay.startAfterMessageId` | integer ≥ 0 | `0` | Messages with an id at or below this are never relayed (cutover watermark, see [Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md)). |
 | `relay.maxAttempts` | integer ≥ 1 | `5` | Attempts before a message Discord refuses as invalid is skipped with a notice. |
-| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 32 | `45` | Outbound requests per alarm invocation (Free plan limit: 50). The minimum fits a run's setup and one message's worst case (`src/relay/limits.ts`). |
+| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 34 | `45` | Outbound requests per alarm invocation (Free plan limit: 50). The minimum includes one retry if a long-message file upload falls back to the truncation link (`src/relay/limits.ts`). |
 | `avatars.chatwoot` | https URL | `<publicUrl>/favicon-512x512.png` | Avatar of activity lines, cards, notices, agent bots without an https Chatwoot avatar, and agents with neither a linked Discord user nor an https Chatwoot avatar. |
 | `avatars.contact` | https URL | Gravatar "mystery person" | Avatar of customers without an https avatar in Chatwoot. |
 | `queue` | object | unset | The hourly [support queue](#support-queue). Unset: off. Requires `relay.subrequestBudget` ≥ 6 × accounts + 4. |
@@ -451,7 +454,7 @@ See [SECURITY.md](https://github.com/Phala-Network/chatwoot-workers/blob/main/SE
 | Free plan limit | How this service stays within it |
 |---|---|
 | 10 ms CPU per Worker request | The Worker verifies a signature, parses JSON, and makes one Durable Object call. Bodies over 2 MB are rejected; a very large webhook that fails is relayed by the next sweep. |
-| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 28 requests remain (its parts, 16 for everything else a message may need, and 12 to finish the run), so the budget must be at least `relay.maxChunks` + 33 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
+| 50 subrequests per invocation | Alarms count requests against `relay.subrequestBudget` and yield to a fresh invocation before it runs out. A conversation run needs 5 requests to set up; it starts a message only while `relay.maxChunks` + 29 requests remain (its parts, 17 for everything else a message may need, including a failed `message.txt` upload and fallback, and 12 to finish the run), so the budget must be at least `relay.maxChunks` + 34 (`src/relay/limits.ts`). A command starts only with 20 left, a sweep page with 1. |
 | 128 MB memory | Attachments are capped at 25 MB each / 50 MB per command. |
 | 100,000 Worker requests/day | See the estimate below. |
 | Durable Objects (SQLite): 100,000 requests/day, 100,000 rows written/day | See the estimate below. |

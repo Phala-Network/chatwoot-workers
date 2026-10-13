@@ -34,6 +34,10 @@ interface FakeMessage {
   attachments?: Array<Record<string, unknown>>;
 }
 
+function webhookPayload(request: Recorded): Record<string, unknown> {
+  return request.form ? JSON.parse(String(request.form.get("payload_json"))) : JSON.parse(request.body);
+}
+
 /** One Chatwoot conversation (#12 in account 3) and its messages, and the Discord forum. */
 class World {
   conversation: Record<string, unknown> = {
@@ -127,7 +131,7 @@ class World {
         if (
           thread &&
           this.failAnnouncements > 0 &&
-          String(JSON.parse(request.body).content).startsWith("-# Assigned to")
+          String(webhookPayload(request).content).startsWith("-# Assigned to")
         ) {
           this.failAnnouncements -= 1;
           return json({ message: "unavailable" }, { status: 503 });
@@ -165,7 +169,7 @@ class World {
   private webhookPosts(): Array<{ thread: string | null; body: Record<string, unknown> }> {
     return this.sent("POST", "/webhooks/1/tok").map((request) => ({
       thread: request.url.searchParams.get("thread_id"),
-      body: JSON.parse(request.body),
+      body: webhookPayload(request),
     }));
   }
 
@@ -769,6 +773,67 @@ describe("processConversation", () => {
         // The bot's replies answered the customer.
         HANDLED,
       ]);
+    });
+  });
+
+  it("relays Chatwoot-hosted inline email images, drops their cid placeholder, and ignores tracking pixels", async () => {
+    const image = "https://chatwoot.example.com/rails/active_storage/blobs/redirect/abc/inline.png";
+    const cid = "image001.png@outlook.example";
+    const world = new World();
+    world.messages = [
+      {
+        id: 1,
+        content: `Please see [cid:${cid}]\nRegards`,
+        message_type: 0,
+        content_attributes: {
+          email: {
+            subject: "Re: Screenshot",
+            multipart: true,
+            text_content: { quoted: `Please see [cid:${cid}]\nRegards` },
+            html_content: {
+              quoted: `Please see [cid:${cid}]\nRegards`,
+              full: `<html><body><p>Please see</p><img src="${image}"><img src="https://tracker.example/pixel.gif"></body></html>`,
+            },
+          },
+        },
+        // The inline image is also present as an attachment in this fixture: it must be listed once.
+        attachments: [{ file_type: "image", data_url: image }],
+      },
+    ];
+    await withStore(async (store) => {
+      await sync(store, testSettings());
+      expect(world.replies()).toEqual([`Please see \nRegards\n📎 ${image}`, CALL]);
+      expect(world.replies().join("\n")).not.toContain("tracker.example");
+      expect(world.replies().join("\n")).not.toContain(`[cid:${cid}]`);
+    });
+  });
+
+  it("relays an Outlook inline image that exists only in html_content.full", async () => {
+    const image = "https://chatwoot.example.com/rails/active_storage/blobs/redirect/outlook/inline.png";
+    const cid = "image002.png@outlook.example";
+    const world = new World();
+    world.messages = [
+      {
+        id: 1,
+        content: `Screenshot: [cid:${cid}]`,
+        message_type: 0,
+        content_attributes: {
+          email: {
+            subject: "FW: Screenshot",
+            multipart: true,
+            text_content: { quoted: `Screenshot: [cid:${cid}]` },
+            html_content: {
+              quoted: `Screenshot: [cid:${cid}]`,
+              full: `<html><body><p>Screenshot:</p><img src="${image}"></body></html>`,
+            },
+          },
+        },
+        attachments: [],
+      },
+    ];
+    await withStore(async (store) => {
+      await sync(store, testSettings());
+      expect(world.replies()).toEqual([`Screenshot:\n📎 ${image}`, CALL]);
     });
   });
 

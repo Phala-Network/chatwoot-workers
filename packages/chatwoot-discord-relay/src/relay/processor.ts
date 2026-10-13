@@ -147,6 +147,7 @@ export async function processConversation(
       if (budget.remaining < perMessage) return "yield";
       const relayMessage = toRelayMessage(message, {
         account: { id: accountId, name: account.name },
+        chatwootBaseUrl: settings.config.chatwoot.baseUrl,
         inboxName: inboxName ?? null,
         conversation,
         ...(await linkedAgents(context, message)),

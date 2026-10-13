@@ -61,10 +61,10 @@ export class DiscordForum implements ForumClient {
       const sent = await this.withTags(forumChannelId, message.applied_tags, (tags) =>
         this.rest.post<
           RESTPostAPIWebhookWithTokenWaitResult,
-          RESTPostAPIWebhookWithTokenJSONBody,
+          RESTPostAPIWebhookWithTokenJSONBody | FormData,
           RESTPostAPIWebhookWithTokenQuery
         >(Routes.webhook(webhook.id, webhook.token), {
-          body: tags ? { ...message, applied_tags: tags } : message,
+          body: multipartBody(tags ? { ...message, applied_tags: tags } : message),
           // The webhook is this application's, so with_components lets it post any components.
           query: { wait: true, with_components: true, ...(threadId ? { thread_id: threadId } : {}) },
           auth: false,
@@ -267,6 +267,20 @@ export class DiscordForum implements ForumClient {
       return send(tags.filter((id) => existing.has(id)));
     }
   }
+}
+
+/** Discord webhook files use payload_json plus one files[n] multipart field per Blob. */
+function multipartBody(message: WebhookMessage): RESTPostAPIWebhookWithTokenJSONBody | FormData {
+  const files = message.files;
+  if (!files?.length) return message;
+  const payload = { ...message };
+  delete payload.files;
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify(payload));
+  files.forEach((file, index) => {
+    form.append(`files[${index}]`, file.blob, file.filename);
+  });
+  return form;
 }
 
 function isUnknownChannel(error: unknown): boolean {

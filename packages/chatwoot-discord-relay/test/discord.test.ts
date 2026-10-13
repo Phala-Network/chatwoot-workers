@@ -112,6 +112,28 @@ describe("DiscordForum", () => {
     expect(requests[1]?.headers.get("authorization")).toBe("Bot bot-token");
   });
 
+  it("uploads a webhook file as multipart form data with the JSON payload", async () => {
+    const { requests } = mockFetch(
+      application,
+      on("GET", `${api}/channels/55/webhooks`, () =>
+        json([{ id: "1", token: "abc", type: 1, name: "Chatwoot", application_id: "100000000000000001" }]),
+      ),
+      on("POST", `${api}/webhooks/1/abc`, () => json({ id: "m1", channel_id: "thread-9" })),
+    );
+    await forum().execute("55", {
+      content: "Full text attached.",
+      files: [{ blob: new Blob(["客户"], { type: "text/plain;charset=utf-8" }), filename: "message.txt" }],
+    });
+    const post = requests.find((request) => request.url.pathname === "/api/v10/webhooks/1/abc");
+    expect(post?.form?.get("payload_json")).toBe(JSON.stringify({ content: "Full text attached." }));
+    const file = post?.form?.get("files[0]");
+    expect(file).toBeInstanceOf(File);
+    expect((file as File).name).toBe("message.txt");
+    expect((file as File).type).toBe("text/plain;charset=utf-8");
+    expect(await (file as File).text()).toBe("客户");
+    expect(post?.headers.get("content-type")).toMatch(/^multipart\/form-data; boundary=/);
+  });
+
   it("creates the webhook when the forum has none of this application's, even one of the same name", async () => {
     const hooks = [{ id: "2", token: "x", type: 1, name: "Chatwoot", application_id: "999999999999999999" }];
     const ours = (id: string) => ({
