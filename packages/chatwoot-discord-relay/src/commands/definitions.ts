@@ -1,5 +1,5 @@
-// Commands registered in the guild (see scripts/register-commands.ts). Guild commands only
-// exist in that guild, so no `contexts` are needed.
+// Commands registered in each configured forum's guild by the Worker (or scripts/register-commands.ts).
+// Guild commands only exist in that guild, so no `contexts` are needed.
 
 import {
   type APIApplicationCommandOption,

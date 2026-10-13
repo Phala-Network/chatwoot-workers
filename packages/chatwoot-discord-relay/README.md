@@ -237,8 +237,10 @@ and Discord reach each other.
 1. In the Discord application, set **Interactions Endpoint URL** to
    `https://<worker>/discord/interactions`. Discord verifies it with a signed request, so the
    Worker must be deployed first.
-2. Register the commands in your server (again whenever `src/commands/definitions.ts` changes),
-   from a checkout after `npm ci`:
+2. Commands register themselves in every configured forum's server within an hour of a deploy,
+   using the Worker's bot token. Unchanged commands make no Discord calls; failures are logged and
+   retried the next hour. For local setups, the registration script remains available from a checkout
+   after `npm ci`:
    ```sh
    DISCORD_BOT_TOKEN=... npm run register-commands -- --application <app id> --guild <guild id>
    ```
@@ -347,7 +349,7 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `relay.linkAttribute` | string | `discord_thread` | Conversation custom attribute that receives the post URL (`""` disables it). |
 | `relay.startAfterMessageId` | integer ≥ 0 | `0` | Messages with an id at or below this are never relayed (cutover watermark, see [Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md)). |
 | `relay.maxAttempts` | integer ≥ 1 | `5` | Attempts before a message Discord refuses as invalid is skipped with a notice. |
-| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 34 | `45` | Outbound requests per alarm invocation (Free plan limit: 50). The minimum includes one retry if a long-message file upload falls back to the truncation link (`src/relay/limits.ts`). |
+| `relay.subrequestBudget` | integer 20–1000, and ≥ `relay.maxChunks` + 34 | `45` | Outbound requests per alarm or command-registration invocation (Free plan limit: 50). Registration needs 1 + distinct forums + distinct servers, plus any retries. The minimum for alarms includes one retry if a long-message file upload falls back to the truncation link (`src/relay/limits.ts`). |
 | `avatars.chatwoot` | https URL | `<publicUrl>/favicon-512x512.png` | Avatar of activity lines, cards, notices, agent bots without an https Chatwoot avatar, and agents with neither a linked Discord user nor an https Chatwoot avatar. |
 | `avatars.contact` | https URL | Gravatar "mystery person" | Avatar of customers without an https avatar in Chatwoot. |
 | `queue` | object | unset | The hourly [support queue](#support-queue). Unset: off. Requires `relay.subrequestBudget` ≥ 6 × accounts + 4. |

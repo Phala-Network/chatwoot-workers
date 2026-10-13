@@ -1,15 +1,10 @@
 // Registers the slash commands and the "Reply with this" message command in one guild (bulk
-// overwrite). Run manually after changing src/commands/definitions.ts:
+// overwrite). For local setups; deployed Workers register commands automatically each hour:
 //
 //   DISCORD_BOT_TOKEN=... npm run register-commands -- --application <app id> --guild <guild id>
 
 import { parseArgs } from "node:util";
-import {
-  type RESTPutAPIApplicationGuildCommandsJSONBody,
-  type RESTPutAPIApplicationGuildCommandsResult,
-  Routes,
-} from "discord-api-types/v10";
-import { COMMANDS } from "../src/commands/definitions.ts";
+import { registerGuildCommands } from "../src/commands/registration.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
 
 const { values } = parseArgs({
@@ -34,10 +29,7 @@ if (
 
 try {
   const rest = new DiscordRest(token, (request) => fetch(request));
-  const registered = await rest.put<
-    RESTPutAPIApplicationGuildCommandsResult,
-    RESTPutAPIApplicationGuildCommandsJSONBody
-  >(Routes.applicationGuildCommands(values.application, values.guild), { body: COMMANDS });
+  const registered = await registerGuildCommands(rest, values.application, values.guild);
   console.log(`Registered ${registered.length} commands in guild ${values.guild}.`);
 } catch (error) {
   console.error(`Registration failed: ${error instanceof Error ? error.message : String(error)}`);

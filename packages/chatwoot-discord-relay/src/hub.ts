@@ -1,16 +1,18 @@
 // The one Durable Object shared by every conversation. It knows which conversation each post
 // belongs to (commands are given in a post), counts the triage bot's hourly budget, and runs the
-// installation-wide background work: the reconciliation sweep and the hourly support queue.
+// installation-wide background work: the reconciliation sweep, hourly support queue, and guild commands.
 // Requests from conversations only read or write its storage, so none of them waits for that
 // background work.
 
 import { DurableObject } from "cloudflare:workers";
+import { type RESTGetAPIChannelResult, type RESTGetCurrentApplicationResult, Routes } from "discord-api-types/v10";
 import { z } from "zod";
 import { Budget, BudgetExhaustedError } from "../../../shared/budget.ts";
 import { CONVERSATIONS_PER_PAGE, chatwootClient } from "../../../shared/chatwoot/api.ts";
 import { parseJson } from "../../../shared/json.ts";
 import { errorFields, log } from "../../../shared/log.ts";
 import { retryDelay } from "../../../shared/store.ts";
+import { commandRegistrationPayload, registerGuildCommands } from "./commands/registration.ts";
 import { relaysInbox, type Settings } from "./config.ts";
 import { conversationStub } from "./conversation.ts";
 import { DiscordHttpError, DiscordRest } from "./discord/rest.ts";
@@ -21,6 +23,7 @@ import { loadSettings } from "./settings.ts";
 import { type Job, Store } from "./store.ts";
 
 const HUB_NAME = "global";
+const COMMANDS_HASH_KEY = "discord:commands:hash";
 
 export function hub(env: Env) {
   return env.HUB.getByName(HUB_NAME);
@@ -98,6 +101,35 @@ export class Hub extends DurableObject<Env> {
     if (!(await loadSettings(this.env)).config.queue) return;
     this.enqueue({ type: "queue" });
     await this.schedule();
+  }
+
+  /** Updates guild commands on the hourly tick, independently of the sweep and support queue. */
+  async registerCommands(): Promise<void> {
+    try {
+      const payload = commandRegistrationPayload();
+      // JSON.stringify uses the same property order as DiscordRest's request body.
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(payload)));
+      const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      if (this.store.get(COMMANDS_HASH_KEY) === hash) return;
+
+      const settings = await loadSettings(this.env);
+      // This RPC has its own invocation budget; registration uses none of an alarm's requests
+      // reserved for conversations (relay/limits.ts) or the support queue. Retries count too.
+      const budget = new Budget(settings.config.relay.subrequestBudget);
+      const rest = new DiscordRest(settings.secrets.DISCORD_BOT_TOKEN, budget.fetch);
+      const application = await rest.get<RESTGetCurrentApplicationResult>(Routes.currentApplication());
+      const guilds = new Set<string>();
+      for (const forumId of new Set(settings.config.accounts.map((account) => account.forumChannelId))) {
+        const channel = await rest.get<RESTGetAPIChannelResult>(Routes.channel(forumId));
+        if (!("guild_id" in channel) || !channel.guild_id) throw new Error(`Forum ${forumId} has no guild`);
+        guilds.add(channel.guild_id);
+      }
+      for (const guildId of guilds) await registerGuildCommands(rest, application.id, guildId, payload);
+      this.store.set(COMMANDS_HASH_KEY, hash);
+      log.info("guild commands registered", { guilds: guilds.size });
+    } catch (error) {
+      log.error("guild command registration failed; will retry next hour", errorFields(error));
+    }
   }
 
   override async alarm(): Promise<void> {

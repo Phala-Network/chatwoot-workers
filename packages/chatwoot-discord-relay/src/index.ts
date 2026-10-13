@@ -170,8 +170,11 @@ const handler = {
   fetch: app.fetch,
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(hub(env).requestSweep());
-    // The support queue is posted hourly, by the run at minute 0.
-    if (new Date(controller.scheduledTime).getUTCMinutes() === 0) ctx.waitUntil(hub(env).requestQueue());
+    // Hourly tasks run independently: registration cannot delay or fail the support queue.
+    if (new Date(controller.scheduledTime).getUTCMinutes() === 0) {
+      ctx.waitUntil(hub(env).requestQueue());
+      ctx.waitUntil(hub(env).registerCommands());
+    }
   },
 } satisfies ExportedHandler<Env>;
 

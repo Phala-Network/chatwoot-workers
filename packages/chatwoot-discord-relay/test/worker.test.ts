@@ -664,7 +664,11 @@ describe("worker", () => {
   it("the cron sweep relays conversations whose webhooks never arrived", async () => {
     world.conversation(16, [{ id: 901, content: "missed", message_type: 0 }]);
     const ctx = createExecutionContext();
-    await worker.scheduled?.(createScheduledController({ cron: "*/5 * * * *" }), env, ctx);
+    await worker.scheduled?.(
+      createScheduledController({ cron: "*/5 * * * *", scheduledTime: Date.UTC(2026, 9, 13, 0, 5) }),
+      env,
+      ctx,
+    );
     await waitOnExecutionContext(ctx);
     await drain();
     const pages = world.sent("GET", /^\/api\/v1\/accounts\/3\/conversations$/);
@@ -689,7 +693,11 @@ describe("worker", () => {
     world.mock.spy.mockRestore();
     world = new World([old]);
     const ctx = createExecutionContext();
-    await worker.scheduled?.(createScheduledController({ cron: "*/5 * * * *" }), env, ctx);
+    await worker.scheduled?.(
+      createScheduledController({ cron: "*/5 * * * *", scheduledTime: Date.UTC(2026, 9, 13, 0, 5) }),
+      env,
+      ctx,
+    );
     await waitOnExecutionContext(ctx);
     await drain();
     expect(world.sent("GET", /^\/api\/v1\/accounts\/3\/conversations$/)).toHaveLength(1);
@@ -1269,7 +1277,11 @@ describe("worker", () => {
     const isPage = (request: Recorded) => request.url.pathname === "/api/v1/accounts/3/conversations";
 
     const ctx = createExecutionContext();
-    await worker.scheduled?.(createScheduledController({ cron: "*/5 * * * *" }), env, ctx);
+    await worker.scheduled?.(
+      createScheduledController({ cron: "*/5 * * * *", scheduledTime: Date.UTC(2026, 9, 13, 0, 5) }),
+      env,
+      ctx,
+    );
     await waitOnExecutionContext(ctx);
     await vi.waitFor(() => expect(world.requests.some(isPage)).toBe(true));
     await discordInteraction({
@@ -1580,7 +1592,11 @@ async function existingPost(conversationId: number, thread: string): Promise<voi
 
 async function sweep(): Promise<void> {
   const ctx = createExecutionContext();
-  await worker.scheduled?.(createScheduledController({ cron: "*/5 * * * *" }), env, ctx);
+  await worker.scheduled?.(
+    createScheduledController({ cron: "*/5 * * * *", scheduledTime: Date.UTC(2026, 9, 13, 0, 5) }),
+    env,
+    ctx,
+  );
   await waitOnExecutionContext(ctx);
   await drain();
 }
