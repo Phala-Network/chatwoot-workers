@@ -15,6 +15,7 @@ export interface TriageOptions {
   name: string;
   perConversationPerHour: number;
   perHour: number;
+  ready?: { sources: string[]; timeoutSeconds: number } | undefined;
 }
 
 interface NotifierOptions {

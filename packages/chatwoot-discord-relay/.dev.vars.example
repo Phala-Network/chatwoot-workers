@@ -19,3 +19,6 @@ CHATWOOT_AGENT_TOKENS={"100000000000000011":"replace-with-agent-token"}
 
 # Shared with a triage bot's hook (32+ characters), only for Use draft (see "Triage bot hook").
 # TRIAGE_HOOK_SECRET=replace-with-a-long-random-secret
+
+# Each triage readiness source's shared secret (32+ characters each; see "Triage readiness").
+# TRIAGE_READY_SECRETS={"profile":"replace-with-a-long-random-secret"}

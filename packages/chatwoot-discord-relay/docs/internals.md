@@ -61,7 +61,8 @@ request Discord accepted whose response never arrived: Execute Webhook has no id
 The cron trigger queues a sweep per account in the Hub that pages through conversations, most
 recent activity first, back to the start of the previous sweep (at least `reconcile.lookbackSeconds`,
 at most `reconcile.maxCatchUpSeconds`), one page per job, continuing where it stopped, and hands each
-conversation to its object, which queues it when its post is behind or its tags or state differ. Activity means a new message. A change without one (for example only the topic
+conversation to its object, which queues it when its post is behind, its tags or state differ, or an owed
+triage call has reached its readiness deadline. Activity means a new message. A change without one (for example only the topic
 attribute) relies on its webhook, and so do deletions, responses, and delivery failures of
 messages already relayed: the sweep does not re-read relayed messages, so a missed webhook for
 one is not repaired. The triage bot's call is decided when a run ends, from the replies the run relayed after
@@ -106,6 +107,15 @@ followed the customer's latest message decide triage. `assignee_type` prevents b
 agents. Manage keeps all labels in `router.keepLabels`. See the package README's "How it works" for the model
 and its migration/rollback contract. Shared implementations live in the repository's `shared/` source tree
 and are bundled independently into each published package.
+
+With [triage readiness](../README.md#triage-readiness), each conversation stores a monotonic message watermark
+per source and a fixed deadline for its first owed call. A report records the watermark and enqueues the
+conversation; it does not post directly. The processor snapshots readiness before fetching Chatwoot messages,
+so a report racing a fetch waits for the next run. The gate precedes triage decisions and budget reservations;
+follow-ups replace the owed message without extending the deadline. The existing alarm job wakes at the
+earlier of the readiness deadline and an assignee announcement's deadline. Watermarks belong to the Chatwoot
+conversation and survive a completed call or a recreated Discord post; the owed deadline is cleared with
+the rest of the post's triage state.
 
 ## Chatwoot contracts
 

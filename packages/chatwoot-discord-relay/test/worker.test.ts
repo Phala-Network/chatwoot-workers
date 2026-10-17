@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Budget } from "../../../shared/budget.ts";
 import { chatwootClient } from "../../../shared/chatwoot/api.ts";
+import { Conversation } from "../src/conversation.ts";
 import { DiscordForum } from "../src/discord/forum.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
 import worker from "../src/index.ts";
@@ -303,6 +304,45 @@ async function triageHook(payload: unknown, secret = "triage-hook-secret-0123456
       },
     }),
   );
+}
+
+async function readyHook(
+  payload: unknown,
+  {
+    secret = "readiness-secret-0123456789abcdef",
+    timestamp = Math.floor(Date.now() / 1000),
+    enabled = true,
+    configuredSecret = true,
+    rawBody = JSON.stringify(payload),
+  } = {},
+) {
+  const settings = await loadSettings(env);
+  const ctx = createExecutionContext();
+  const ts = String(timestamp);
+  const response = await worker.fetch(
+    new Request<unknown, IncomingRequestCfProperties>("https://relay.example.com/triage/ready", {
+      method: "POST",
+      body: rawBody,
+      headers: {
+        "content-type": "application/json",
+        "x-timestamp": ts,
+        "x-signature": `sha256=${await hmac(secret, `${ts}.${rawBody}`)}`,
+      },
+    }),
+    {
+      ...env,
+      CONFIG: {
+        ...settings.config,
+        triage: { ...settings.config.triage, ...(enabled ? { ready: { sources: ["profile"] } } : {}) },
+      },
+      ...(configuredSecret
+        ? { TRIAGE_READY_SECRETS: JSON.stringify({ profile: "readiness-secret-0123456789abcdef" }) }
+        : {}),
+    },
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return response;
 }
 
 /** The ticket buttons: the answering row, then who owns it, then its state. */
@@ -1623,3 +1663,109 @@ async function setAlarmNow(): Promise<void> {
       await state.storage.setAlarm(Date.now());
     });
 }
+
+describe("triage readiness hooks", () => {
+  it("authenticates readiness reports and rejects stale, unknown, malformed, and oversized requests", async () => {
+    const ready = { source: "profile", accountId: 3, conversationId: 82, messageId: 101 };
+    expect((await readyHook(ready, { enabled: false, configuredSecret: false })).status).toBe(404);
+    expect((await readyHook(ready, { secret: "wrong-secret" })).status).toBe(401);
+    expect((await readyHook(ready, { timestamp: Math.floor(Date.now() / 1000) - 301 })).status).toBe(401);
+    expect((await readyHook({ ...ready, source: "unknown" })).status).toBe(401);
+    expect((await readyHook({ ...ready, source: "toString" })).status).toBe(401);
+    for (const payload of [
+      null,
+      {},
+      { ...ready, messageId: "101" },
+      { ...ready, messageId: 0 },
+      { ...ready, extra: 1 },
+    ]) {
+      expect((await readyHook(payload)).status).toBe(400);
+    }
+    expect((await readyHook(ready, { rawBody: "{" })).status).toBe(400);
+    expect((await readyHook(ready, { rawBody: " ".repeat(64 * 1024 + 1) })).status).toBe(413);
+    expect((await readyHook({ ...ready, accountId: 99 })).status).toBe(404);
+    expect(await (await readyHook(ready, { enabled: false })).json()).toEqual({ ok: true, ignored: true });
+    expect(world.requests).toHaveLength(0);
+  });
+
+  it("durably records monotonic readiness reports and wakes the conversation without a message webhook", async () => {
+    const id = 82;
+    world.conversation(id, [{ id: 101, content: "Question", message_type: 0 }]);
+    const ready = { source: "profile", accountId: 3, conversationId: id, messageId: 101 };
+    for (const messageId of [101, 101, 100]) {
+      expect((await readyHook({ ...ready, messageId })).status).toBe(200);
+    }
+    await drain();
+    await runInDurableObject(conversationObject(id), async (_instance, state) => {
+      expect(new Store(state.storage.sql).readyMessageId(3, id, "profile")).toBe(101);
+    });
+    expect(world.webhookPosts().map((post) => String(post.body.content))).toContain("Question");
+  });
+
+  it("reconciles an overdue owed call even when the messages, state, and card are current", async () => {
+    const id = 83;
+    world.conversation(id, [{ id: 101, content: "Question", message_type: 0 }]);
+    await chatwootWebhook(created(id));
+    await drain();
+    const chatwoot = chatwootClient("https://chatwoot.example.com", "relay-token", fetch);
+    const listed = await chatwoot.getConversation(3, id);
+    if (!listed) throw new Error("fixture conversation missing");
+    const settings = await loadSettings(env);
+    await runInDurableObject(conversationObject(id), async (_instance, state) => {
+      const instance = new Conversation(state, {
+        ...env,
+        CONFIG: {
+          ...settings.config,
+          triage: { ...settings.config.triage, ready: { sources: ["profile"] } },
+        },
+        TRIAGE_READY_SECRETS: JSON.stringify({ profile: "readiness-secret-0123456789abcdef" }),
+      });
+      const store = new Store(state.storage.sql);
+      store.updateConversation(3, id, { triageMessageId: 101, triageDeadline: Date.now() + 30000 });
+      await instance.reconcile(3, id, listed);
+      expect(store.nextWakeup()).toBeUndefined();
+      store.updateConversation(3, id, { triageDeadline: Date.now() - 1 });
+      await instance.reconcile(3, id, listed);
+      expect(store.nextWakeup()).toBeLessThanOrEqual(Date.now());
+    });
+    await drain();
+    await runInDurableObject(conversationObject(id), async (_instance, state) => {
+      expect(new Store(state.storage.sql).conversation(3, id)?.triageMessageId).toBe(0);
+    });
+  });
+
+  it("without readiness, reconciles only behind, stale, or held conversations even with an owed call", async () => {
+    const id = 84;
+    expect((await loadSettings(env)).config.triage.ready).toBeUndefined();
+    world.conversation(id, [{ id: 101, content: "Question", message_type: 0 }]);
+    await chatwootWebhook(created(id));
+    await drain();
+    const chatwoot = chatwootClient("https://chatwoot.example.com", "relay-token", fetch);
+    const listed = await chatwoot.getConversation(3, id);
+    if (!listed) throw new Error("fixture conversation missing");
+    await runInDurableObject(conversationObject(id), async (instance, state) => {
+      const store = new Store(state.storage.sql);
+      store.updateConversation(3, id, { triageMessageId: 101 });
+      state.storage.sql.exec("UPDATE conversations SET triage_deadline = NULL");
+      await instance.reconcile(3, id, listed);
+      expect(store.nextWakeup()).toBeUndefined();
+      store.updateConversation(3, id, { triageDeadline: Date.now() - 1 });
+      await instance.reconcile(3, id, listed);
+      expect(store.nextWakeup()).toBeUndefined();
+
+      // These are the same three queue reasons used before readiness was introduced.
+      for (const reason of ["behind", "stale", "held"]) {
+        if (reason === "held") store.set("held", "101");
+        await instance.reconcile(3, id, {
+          ...listed,
+          ...(reason === "behind" ? { messages: [{ id: 102 }] } : {}),
+          ...(reason === "stale" ? { status: "resolved" } : {}),
+        });
+        expect(store.nextDueJob()?.key, reason).toBe(`conversation:3:${id}`);
+        store.deleteJob(`conversation:3:${id}`);
+      }
+      store.delete("held");
+      await state.storage.deleteAlarm();
+    });
+  });
+});

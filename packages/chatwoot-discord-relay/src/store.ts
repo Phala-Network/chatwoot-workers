@@ -115,6 +115,15 @@ const MIGRATIONS: string[] = [
    ALTER TABLE conversations ADD COLUMN assignee_wait_since INTEGER;`,
   // 0.47 lets the triage bot take a newer message into the turn it runs, so a call in flight is not tracked.
   `ALTER TABLE conversations DROP COLUMN triage_called_at;`,
+  // A readiness deadline belongs to the owed call; source watermarks only move forward.
+  `ALTER TABLE conversations ADD COLUMN triage_deadline INTEGER;
+   CREATE TABLE triage_ready (
+     account_id INTEGER NOT NULL,
+     conversation_id INTEGER NOT NULL,
+     source TEXT NOT NULL,
+     message_id INTEGER NOT NULL,
+     PRIMARY KEY (account_id, conversation_id, source)
+   );`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;
@@ -137,6 +146,7 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
   ["announcePending", "announce_pending"],
   ["triageMessageId", "triage_message_id"],
   ["triageAnswered", "triage_answered"],
+  ["triageDeadline", "triage_deadline"],
   ["titleSubject", "title_subject"],
   ["title", "title"],
   ["titleMessageId", "title_message_id"],
@@ -176,6 +186,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
         announce_pending: number | null;
         triage_message_id: number | null;
         triage_answered: number | null;
+        triage_deadline: number | null;
         title_subject: string | null;
         title: string | null;
         title_message_id: number | null;
@@ -202,6 +213,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
       announcePending: row.announce_pending ?? undefined,
       triageMessageId: row.triage_message_id ?? undefined,
       triageAnswered: row.triage_answered ?? undefined,
+      triageDeadline: row.triage_deadline ?? undefined,
       titleSubject: row.title_subject ?? undefined,
       title: row.title ?? undefined,
       titleMessageId: row.title_message_id ?? undefined,
@@ -249,6 +261,32 @@ export class Store extends QueueStore implements RelayStore, Cache {
     );
   }
 
+  /** A source's latest covered Chatwoot message, or 0 before its first report. */
+  readyMessageId(accountId: number, conversationId: number, source: string): number {
+    return (
+      this.sql
+        .exec<{ message_id: number }>(
+          "SELECT message_id FROM triage_ready WHERE account_id = ? AND conversation_id = ? AND source = ?",
+          accountId,
+          conversationId,
+          source,
+        )
+        .toArray()[0]?.message_id ?? 0
+    );
+  }
+
+  /** Repeated and out-of-order reports never lower a source's watermark. */
+  recordTriageReady(accountId: number, conversationId: number, source: string, messageId: number): void {
+    this.sql.exec(
+      `INSERT INTO triage_ready (account_id, conversation_id, source, message_id) VALUES (?, ?, ?, ?)
+       ON CONFLICT (account_id, conversation_id, source) DO UPDATE SET message_id = MAX(message_id, excluded.message_id)`,
+      accountId,
+      conversationId,
+      source,
+      messageId,
+    );
+  }
+
   /** Records a failed attempt at relaying `messageId` and returns the attempt count. */
   recordFailure(accountId: number, conversationId: number, messageId: number): number {
     this.ensureRow(accountId, conversationId);
@@ -271,7 +309,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
     this.sql.exec(
       `INSERT INTO conversations (account_id, conversation_id, thread_id, card_id) VALUES (?, ?, ?, ?)
        ON CONFLICT (account_id, conversation_id) DO UPDATE SET thread_id = excluded.thread_id, state = NULL,
-         announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
+         announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL, triage_deadline = NULL, title_subject = NULL, title = NULL, title_message_id = NULL,
          card_id = excluded.card_id, card_covered = NULL, answer_id = NULL, answer_source_id = NULL,
          customer_message_id = NULL, assignee_wait_since = NULL`,
       accountId,
@@ -287,7 +325,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
    * starts; nothing is left to drop after the first time.
    */
   keepThreadIndexOnly(): void {
-    for (const table of ["posted_messages", "derived_messages", "submitted_responses"]) {
+    for (const table of ["posted_messages", "derived_messages", "submitted_responses", "triage_ready"]) {
       this.sql.exec(`DELETE FROM ${table}`);
     }
     this.sql.exec(
@@ -375,7 +413,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
 
   forgetThread(accountId: number, conversationId: number): void {
     this.sql.exec(
-      `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL,
+      `UPDATE conversations SET thread_id = NULL, state = NULL, announced_assignee = NULL, announce_pending = NULL, triage_message_id = NULL, triage_answered = NULL, triage_deadline = NULL,
          title_subject = NULL, title = NULL, title_message_id = NULL, card_id = NULL, card_covered = NULL, answer_id = NULL,
          answer_source_id = NULL, customer_message_id = NULL, assignee_wait_since = NULL
        WHERE account_id = ? AND conversation_id = ?`,
