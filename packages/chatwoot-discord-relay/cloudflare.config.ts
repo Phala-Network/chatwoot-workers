@@ -35,6 +35,7 @@ export default defineConfig(({ mode }) => ({
       ...(mode === "development" && {
         CHATWOOT_AGENT_TOKENS: bindings.secret(),
         TRIAGE_HOOK_SECRET: bindings.secret(),
+        TRIAGE_READY_SECRETS: bindings.secret(),
       }),
       CONFIG: bindings.json({
         chatwoot: { baseUrl: "https://chatwoot.example.com" },

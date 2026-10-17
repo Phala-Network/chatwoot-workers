@@ -18,6 +18,7 @@ Set `triage.userId` in `CONFIG` to the agent's Discord user id. Optional setting
 |---|---|---|
 | `triage.name` | `Triage bot` | Name used in the notes posted when the budget is used up. |
 | `triage.perConversationPerHour` / `perHour` | `5` / `30` | How many customer messages call the agent, per conversation and in total, each hour. |
+| `triage.ready` | unset | Wait for named services to finish their Chatwoot writes before the call; see [Triage readiness](../README.md#triage-readiness). |
 
 The agent's bot needs to see the forum and its posts, read message content there, and send
 messages in posts (threads).

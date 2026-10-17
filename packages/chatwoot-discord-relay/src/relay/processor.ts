@@ -78,10 +78,18 @@ export async function processConversation(
   conversationId: number,
 ): Promise<ProcessOutcome> {
   const { settings, store, relay, chatwoot, budget } = context;
+  const ignored = (): ProcessOutcome => {
+    // An ignored ticket cannot finish its owed call. Do not keep waking it on an expired deadline.
+    if (settings.config.triage.ready && store.conversation(accountId, conversationId)?.triageMessageId) {
+      relay.clearTriage(accountId, conversationId);
+    }
+    return "done";
+  };
   const account = settings.account(accountId);
-  if (!account) return "done";
+  if (!account) return ignored();
   const limits = settings.config.relay;
   const perMessage = requestsPerMessage(limits.maxChunks);
+  const readiness = relay.readiness(accountId, conversationId);
 
   const raw = await chatwoot.getConversation(accountId, conversationId);
   if (!raw) {
@@ -89,7 +97,7 @@ export async function processConversation(
     await relay.closeDeleted(accountId, conversationId);
     return "done";
   }
-  if (!relaysInbox(account, raw.inbox_id)) return "done";
+  if (!relaysInbox(account, raw.inbox_id)) return ignored();
   let conversation = toRelayConversation(conversationId, raw);
   const known = store.conversation(accountId, conversationId)?.threadId;
   if (known) await context.claimThread(accountId, conversationId, known);
@@ -134,13 +142,15 @@ export async function processConversation(
         // A customer message: read the conversation again, which may have been handed to people since.
         const fresh = await chatwoot.getConversation(accountId, conversationId);
         if (!fresh) return "done";
-        if (!relaysInbox(account, fresh.inbox_id)) return "done";
+        if (!relaysInbox(account, fresh.inbox_id)) return ignored();
         conversation = toRelayConversation(conversationId, fresh);
         if (
           fresh.status === "pending" &&
           fresh.inbox_id !== undefined &&
           (await chatwoot.inboxBot(accountId, fresh.inbox_id))
         ) {
+          // A previously owed call is no longer eligible, even while this new message is held.
+          if (settings.config.triage.ready) await relay.triage(accountId, conversation, readiness);
           return "pending";
         }
       }
@@ -192,7 +202,7 @@ export async function processConversation(
   const threadId = post?.threadId;
   if (threadId) {
     if (budget.remaining < FINISH_REQUESTS) return "yield";
-    const call = await relay.triage(accountId, conversation);
+    const call = await relay.triage(accountId, conversation, readiness);
     if (post?.announcePending) await relay.announceAssignee(accountId, conversation);
     await relay.sync(accountId, conversation, threadId);
     await linkPost(context, accountId, account.forumChannelId, conversation, threadId);

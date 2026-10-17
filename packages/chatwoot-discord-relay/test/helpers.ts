@@ -51,6 +51,11 @@ export class MemoryStore implements RelayStore {
   parts = new Map<string, string[]>();
   counters = new Map<string, number>();
   decisions = new Map<string, string>();
+  ready = new Map<string, number>();
+
+  readyMessageId(a: number, c: number, source: string) {
+    return this.ready.get(`${a}:${c}:${source}`) ?? 0;
+  }
 
   conversation(a: number, c: number) {
     const row = this.rows.get(`${a}:${c}`);
@@ -62,6 +67,7 @@ export class MemoryStore implements RelayStore {
       announcePending,
       triageMessageId,
       triageAnswered,
+      triageDeadline,
       titleSubject,
       title,
       titleMessageId,
@@ -75,6 +81,7 @@ export class MemoryStore implements RelayStore {
       announcePending,
       triageMessageId,
       triageAnswered,
+      triageDeadline,
       titleSubject,
       title,
       titleMessageId,

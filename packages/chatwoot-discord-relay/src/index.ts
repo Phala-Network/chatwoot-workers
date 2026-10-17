@@ -106,6 +106,43 @@ app.post("/triage/answered", bodyLimit({ maxSize: 64 * 1024 }), async (c) => {
   return c.json({ ok: true });
 });
 
+// A source reports only after all its Chatwoot writes through messageId have completed.
+const readySchema = z.strictObject({
+  source: z.string().min(1),
+  accountId: z.number().int().positive(),
+  conversationId: z.number().int().positive(),
+  messageId: z.number().int().positive(),
+});
+
+app.post(
+  "/triage/ready",
+  bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.text("payload too large", 413) }),
+  async (c) => {
+    const settings = await loadSettings(c.env);
+    const secrets = settings.secrets.TRIAGE_READY_SECRETS;
+    if (!secrets) return c.text("not found", 404);
+    const timestamp = c.req.header("x-timestamp");
+    if (!timestamp || !isFreshTimestamp(timestamp, Math.floor(Date.now() / 1000))) {
+      return c.text("invalid or stale timestamp", 401);
+    }
+    const body = new Uint8Array(await c.req.arrayBuffer());
+    let ready: z.infer<typeof readySchema>;
+    try {
+      ready = readySchema.parse(JSON.parse(new TextDecoder().decode(body)));
+    } catch {
+      return c.text("bad request", 400);
+    }
+    const secret = Object.hasOwn(secrets, ready.source) ? secrets[ready.source] : undefined;
+    if (!secret || !(await verifyChatwootSignature(secret, timestamp, body, c.req.header("x-signature")))) {
+      return c.text("invalid signature", 401);
+    }
+    if (!settings.account(ready.accountId)) return c.text("unknown account", 404);
+    if (!settings.config.triage.ready?.sources.includes(ready.source)) return c.json({ ok: true, ignored: true });
+    await conversationStub(c.env, ready.accountId, ready.conversationId).triageReady(ready);
+    return c.json({ ok: true });
+  },
+);
+
 app.post("/discord/interactions", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
   // Discord waits 3 s for the reply editor, counted from the interaction: one deadline for all of it.
   const deadline = AbortSignal.timeout(DRAFT_DEADLINE_MS);

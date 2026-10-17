@@ -56,7 +56,7 @@ with fictional data.*
 - [Deploy](#deploy)
 - [Commands and buttons](#commands-and-buttons)
 - [Configuration reference](#configuration-reference)
-- [Routing](#routing), [Triage bot hook](#triage-bot-hook), [Support queue](#support-queue)
+- [Routing](#routing), [Triage readiness](#triage-readiness), [Triage bot hook](#triage-bot-hook), [Support queue](#support-queue)
 - [Security model](#security-model)
 - [Limits and the Workers Free plan](#limits-and-the-workers-free-plan)
 - [Development](#development)
@@ -345,6 +345,8 @@ a larger configuration goes in a [KV namespace](https://developers.cloudflare.co
 | `triage.name` | 1–100 characters | `Triage bot` | Name used in budget notes. |
 | `triage.perConversationPerHour` | integer ≥ 1 | `5` | Calls of the triage bot per conversation each hour. |
 | `triage.perHour` | integer ≥ 1 | `30` | Calls of the triage bot in total each hour. |
+| `triage.ready.sources` | non-empty array of unique, non-empty names | unset | Context services to wait for before calling the triage bot; see [Triage readiness](#triage-readiness). |
+| `triage.ready.timeoutSeconds` | integer ≥ 1 | `30` | Maximum readiness wait from the first owed call; follow-ups do not extend it. |
 | `relay.maxChunks` | integer 1–10 | `4` | Discord messages per Chatwoot message before truncation. Incoming customer messages that exceed this limit include the complete UTF-8 body as `message.txt` on the truncation note when Discord accepts the upload. |
 | `relay.topicAttribute` | non-empty string | `topic` | Conversation custom attribute used as a topic tag. |
 | `relay.linkAttribute` | string | `discord_thread` | Conversation custom attribute that receives the post URL (`""` disables it). |
@@ -377,6 +379,7 @@ Worker secrets, never in the configuration, also validated at startup:
 | `CHATWOOT_WEBHOOK_SECRETS` | JSON object, `{"<account id>":"<secret>"}` | Required for every configured account; missing entries fail configuration validation. |
 | `CHATWOOT_AGENT_TOKENS` | JSON object, `{"<Discord user id>":"<token>"}`; optional, default `{}` | Each linked agent's own Chatwoot access token; commands act with it. |
 | `TRIAGE_HOOK_SECRET` | 32+ characters; optional | Signs the triage bot's hook ([triage bot hook](#triage-bot-hook)). Unset: the route is off. |
+| `TRIAGE_READY_SECRETS` | JSON object, `{"<source name>":"<32+ character secret>"}`; optional | Signs [readiness reports](#triage-readiness). Every configured readiness source needs an entry; missing or short secrets fail validation. Unset: the route is off. |
 
 ## Routing
 
@@ -395,6 +398,85 @@ when it sets a topic.
 Upgrading from a relay with built-in routing (0.28.0 or earlier) and rolling back are described in
 [Operations](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/operations.md) and the router's
 [upgrade and rollback instructions](https://github.com/Phala-Network/chatwoot-workers/tree/main/packages/chatwoot-router#upgrade-and-rollback).
+
+## Triage readiness
+
+A service may add context to Chatwoot after a customer message, such as a private note about the customer.
+To make the triage bot see that context before answering, name the services whose completed writes it needs:
+
+```json
+{
+  "triage": {
+    "userId": "100000000000000021",
+    "ready": { "sources": ["profile", "history"], "timeoutSeconds": 30 }
+  }
+}
+```
+
+Set the Worker secret `TRIAGE_READY_SECRETS` to a JSON map of those names to separate, random secrets of
+at least 32 characters each. Give each service only its own secret. With `triage.ready` unset, the relay
+calls the bot as before. Services can start reporting before readiness is enabled: authenticated reports
+from sources absent from `triage.ready.sources` are acknowledged with `{"ok":true,"ignored":true}`.
+
+Each service sends `POST /triage/ready` to the relay with this JSON body:
+
+```json
+{"source":"profile","accountId":1,"conversationId":12,"messageId":101}
+```
+
+The ids are positive integers: `conversationId` is Chatwoot's account-local conversation id and `messageId`
+is the Chatwoot customer message id, not a Discord id. The report means: **all of this service's Chatwoot
+writes for customer messages up to and including `messageId` have completed**. Reports are idempotent;
+the relay stores the largest message id for each source and conversation, so late reports cannot lower it.
+
+Sign the exact request bytes with the source's secret. Headers are `x-timestamp` (Unix seconds, within
+five minutes of the relay's clock) and `x-signature: sha256=<hex HMAC-SHA256("<timestamp>.<body>")>`.
+For example, this Python request reads the secrets from the environment and sends a signed report:
+
+```python
+import hashlib
+import hmac
+import json
+import os
+import time
+import urllib.request
+
+source = "profile"
+secret = json.loads(os.environ["TRIAGE_READY_SECRETS"])[source]
+body = json.dumps({"source": source, "accountId": 1, "conversationId": 12, "messageId": 101}).encode()
+timestamp = str(int(time.time()))
+signature = hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+request = urllib.request.Request(
+    "https://relay.example.com/triage/ready",
+    data=body,
+    headers={"Content-Type": "application/json", "x-timestamp": timestamp, "x-signature": "sha256=" + signature},
+)
+with urllib.request.urlopen(request, timeout=10) as response:
+    print(response.status)  # 200: durably recorded and the conversation job woken.
+```
+
+Invalid signatures, unknown sources, and stale timestamps return 401; invalid JSON or fields return 400;
+bodies over 64 KiB return 413. An unknown account or an unset `TRIAGE_READY_SECRETS` returns 404. Errors
+return no internal details. Retry failed reports with backoff and a fresh timestamp/signature.
+
+For the newest customer message that owes a call, every configured source must report that id or a higher
+one. The woken job fetches Chatwoot messages afresh and relays them before the call, even when a note's
+`message_created` webhook has not arrived. A report arriving during a fetch is considered on the next run,
+so it cannot authorize a call from an older message-page snapshot. The call stays last after the run's
+messages and card.
+
+The first owed call starts a fixed deadline of `timeoutSeconds` (default 30). Follow-ups move the owed
+call to the newest customer message without extending the deadline. At the deadline, the relay proceeds
+within its usual triage budgets and logs `triage called without context` with `missingSources`. Budgets
+are decided and counted only once readiness allows the decision or the deadline passes. If a public
+reply answers the customer or the ticket is no longer open, the usual "not called" note appears immediately.
+Conversation alarms wake the job at the deadline; the reconciliation sweep also recovers overdue calls.
+
+When writing a context service, report **every customer message**, whatever the service decided: context
+added, unchanged, or nothing applicable. Await successful Chatwoot writes before reporting. A report for
+message M also covers all earlier customer messages, so process them in order or coalesce through the
+newest message only after completing the work it covers. Retry failed work before reporting it ready;
+the relay's timeout keeps a service failure from holding the triage call indefinitely.
 
 ## Triage bot hook
 

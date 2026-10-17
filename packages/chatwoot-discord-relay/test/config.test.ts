@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { configSchema } from "../src/config.ts";
+import { configSchema, parseSettings } from "../src/config.ts";
 import { loadSettings } from "../src/settings.ts";
 
 const minimal = {
@@ -113,6 +113,36 @@ describe("configuration", () => {
 
   it("bounds the triage bot's name, which its budget notes repeat", () => {
     expect(configSchema.safeParse({ ...minimal, triage: { name: "x".repeat(101) } }).success).toBe(false);
+  });
+
+  it("validates optional readiness sources, timeout, and their secrets", () => {
+    expect(configSchema.parse(minimal).triage.ready).toBeUndefined();
+    const configured = { ...minimal, triage: { ready: { sources: ["profile", "history"] } } };
+    expect(configSchema.parse(configured).triage.ready?.timeoutSeconds).toBe(30);
+    for (const ready of [
+      { sources: [] },
+      { sources: [""] },
+      { sources: ["profile", "profile"] },
+      { sources: ["profile"], timeoutSeconds: 0 },
+      { sources: ["profile"], timeoutSeconds: 1.5 },
+      { sources: ["profile"], timeout: 30 },
+    ]) {
+      expect(configSchema.safeParse({ ...minimal, triage: { ready } }).success).toBe(false);
+    }
+    expect(() => parseSettings(configured, env)).toThrow(/TRIAGE_READY_SECRETS.*profile/);
+    for (const value of ["not json", "[]", '{"profile":"too short"}']) {
+      expect(() => parseSettings(minimal, { ...env, TRIAGE_READY_SECRETS: value })).toThrow(/TRIAGE_READY_SECRETS/);
+    }
+    const secrets = { profile: "a".repeat(32) };
+    expect(() => parseSettings(configured, { ...env, TRIAGE_READY_SECRETS: JSON.stringify(secrets) })).toThrow(
+      /TRIAGE_READY_SECRETS.*history/,
+    );
+    expect(
+      parseSettings(configured, {
+        ...env,
+        TRIAGE_READY_SECRETS: JSON.stringify({ ...secrets, history: "b".repeat(32) }),
+      }).config.triage.ready,
+    ).toEqual({ sources: ["profile", "history"], timeoutSeconds: 30 });
   });
 });
 

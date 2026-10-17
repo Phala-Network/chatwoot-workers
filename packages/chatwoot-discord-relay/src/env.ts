@@ -18,4 +18,5 @@ export interface Env {
   CHATWOOT_WEBHOOK_SECRETS: string;
   CHATWOOT_AGENT_TOKENS?: string;
   TRIAGE_HOOK_SECRET?: string;
+  TRIAGE_READY_SECRETS?: string;
 }

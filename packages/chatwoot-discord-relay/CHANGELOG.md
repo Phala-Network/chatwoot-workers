@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-10-17
+
+### Added
+
+- Optional triage readiness: `triage.ready.sources` names services whose Chatwoot writes must be relayed
+  before the triage bot is called. Each service signs `POST /triage/ready` with its entry in
+  `TRIAGE_READY_SECRETS`, reporting every customer message after its writes complete. Source watermarks
+  are durable, monotonic, and idempotent. Readiness is captured before fetching messages, so a report
+  received before its note's webhook still puts the note before the call.
+- The first owed call has a fixed timeout (`triage.ready.timeoutSeconds`, default 30); follow-ups
+  coalesce into the latest customer message without extending it or spending triage budgets. At the
+  deadline the bot is called with a warning naming missing sources. Answers and tickets no longer
+  open get their usual "not called" note immediately. Alarms and the reconciliation sweep recover
+  overdue calls. With `triage.ready` unset, calls work as before.
+
 ## [0.52.0] - 2026-10-13
 
 ### Added
@@ -983,7 +998,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.52.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.53.0...HEAD
+[0.53.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.52.0...chatwoot-discord-relay@0.53.0
 [0.52.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.51.0...chatwoot-discord-relay@0.52.0
 [0.51.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.50.0...chatwoot-discord-relay@0.51.0
 [0.50.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.49.1...chatwoot-discord-relay@0.50.0

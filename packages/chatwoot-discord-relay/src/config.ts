@@ -78,6 +78,13 @@ export const configSchema = z
         name: z.string().min(1).max(100).default("Triage bot"),
         perConversationPerHour: z.number().int().positive().default(5),
         perHour: z.number().int().positive().default(30),
+        /** Services whose Chatwoot writes must be relayed before calling the triage bot. */
+        ready: z
+          .strictObject({
+            sources: z.array(z.string().min(1)).min(1).refine(unique, { message: "sources must be unique" }),
+            timeoutSeconds: z.number().int().positive().default(30),
+          })
+          .optional(),
       })
       .prefault({}),
     relay: z
@@ -174,6 +181,8 @@ export const secretsSchema = z.object({
   CHATWOOT_AGENT_TOKENS: jsonRecord.default({}),
   /** Shared with the triage bot's hook, which signs POST /triage/answered. Unset: the route is off. */
   TRIAGE_HOOK_SECRET: z.string().min(32).optional(),
+  /** JSON: {"<readiness source>": "<32+ character shared secret>"} */
+  TRIAGE_READY_SECRETS: jsonRecord.pipe(z.record(z.string().min(1), z.string().min(32))).optional(),
 });
 
 type Secrets = z.infer<typeof secretsSchema>;
@@ -201,6 +210,11 @@ export function parseSettings(rawConfig: unknown, rawSecrets: object): Settings 
 }
 
 export function buildSettings(config: Config, secrets: Secrets): Settings {
+  for (const source of config.triage.ready?.sources ?? []) {
+    if (!secrets.TRIAGE_READY_SECRETS || !Object.hasOwn(secrets.TRIAGE_READY_SECRETS, source)) {
+      throw new ConfigError(`Invalid secrets: TRIAGE_READY_SECRETS: source ${source} needs a readiness secret`);
+    }
+  }
   for (const account of config.accounts) {
     if (!secrets.CHATWOOT_WEBHOOK_SECRETS[String(account.id)]) {
       throw new ConfigError(`Invalid secrets: CHATWOOT_WEBHOOK_SECRETS: account ${account.id} needs a webhook secret`);

@@ -6,6 +6,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Budget } from "../../../shared/budget.ts";
 import { chatwootClient } from "../../../shared/chatwoot/api.ts";
+import { log } from "../../../shared/log.ts";
 import type { Settings } from "../src/config.ts";
 import { DiscordForum } from "../src/discord/forum.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
@@ -60,6 +61,8 @@ class World {
   threadFailure: (() => Response) | undefined;
   /** Discord users by id; others are unknown to Discord. */
   discordUsers: Record<string, { avatar: string | null; discriminator: string }> = {};
+  /** A report can arrive while the message-page request is in flight. */
+  afterMessagesRead: (() => void) | undefined;
   private threads = 0;
   readonly requests: Recorded[];
 
@@ -74,7 +77,9 @@ class World {
           (message) =>
             (after === null || message.id > Number(after)) && (before === null || message.id < Number(before)),
         );
-        return json({ meta: {}, payload: after === null ? found.slice(-20) : found.slice(0, 100) });
+        const response = json({ meta: {}, payload: after === null ? found.slice(-20) : found.slice(0, 100) });
+        this.afterMessagesRead?.();
+        return response;
       }),
       on("POST", `${base}/conversations/12/custom_attributes`, (request) => {
         if (this.failLinks > 0) {
@@ -260,6 +265,7 @@ describe("processConversation", () => {
         "submitted_responses",
         "interactions",
         "derived_messages",
+        "triage_ready",
       ])
         sql.exec(`DROP TABLE IF EXISTS ${table}`);
       sql.exec(`
@@ -1099,6 +1105,202 @@ describe("agent bot lifecycle", () => {
         else reply.status = "failed";
         await sync(store, settings);
         expect(world.replies().at(-1)).toBe(change === "arrives" ? HANDLED : CALL);
+      });
+    },
+  );
+});
+
+function readinessSettings(sources = ["profile"], timeoutSeconds = 30): Settings {
+  return testSettings(
+    { triage: { userId: TRIAGE, ready: { sources, timeoutSeconds } } },
+    { TRIAGE_READY_SECRETS: JSON.stringify(Object.fromEntries(sources.map((source) => [source, "s".repeat(32)]))) },
+  );
+}
+
+describe("triage readiness", () => {
+  it("keeps the existing immediate call with readiness unset", async () => {
+    const world = new World();
+    world.messages = [{ id: 101, content: "Question", message_type: 0 }];
+    await withStore(async (store) => {
+      await sync(store, testSettings());
+      expect(world.replies()).toEqual(["Question", CALL]);
+      expect(store.conversation(3, 12)?.triageDeadline).toBe(0);
+      expect(context(store, testSettings()).relay.wakeAt(3, 12)).toBeUndefined();
+    });
+  });
+
+  it("waits for every source through the latest customer message and relays notes before the call without their webhooks", async () => {
+    const world = new World();
+    const settings = readinessSettings(["profile", "history"]);
+    world.messages = [{ id: 101, content: "Question", message_type: 0 }];
+    await withStore(async (store) => {
+      await sync(store, settings);
+      const deadline = store.conversation(3, 12)?.triageDeadline;
+      expect(deadline).toBeGreaterThan(Date.now());
+      expect(context(store, settings).relay.wakeAt(3, 12)).toBe(deadline);
+      expect(world.replies()).toEqual(["Question"]);
+      expect(store.get("triage:3:101")).toBeUndefined();
+
+      store.recordTriageReady(3, 12, "profile", 101);
+      store.recordTriageReady(3, 12, "history", 99); // Numeric comparison, not lexical.
+      await sync(store, settings);
+      expect(world.replies()).not.toContain(CALL);
+      world.messages.push({ id: 102, content: "Profile details", message_type: 1, private: true });
+      world.messages.push({ id: 103, content: "Earlier tickets", message_type: 1, private: true });
+      // Reports wake a fresh fetch even if neither note's message_created webhook has arrived.
+      store.recordTriageReady(3, 12, "history", 101);
+      store.recordTriageReady(3, 12, "history", 101);
+      store.recordTriageReady(3, 12, "history", 100);
+      expect(store.readyMessageId(3, 12, "history")).toBe(101);
+      expect(store.readyMessageId(1, 12, "history")).toBe(0);
+      expect(store.readyMessageId(3, 13, "history")).toBe(0);
+      await sync(store, settings);
+      expect(world.replies()).toEqual([
+        "Question",
+        "🔒 **Internal note**\nProfile details",
+        "🔒 **Internal note**\nEarlier tickets",
+        CALL,
+      ]);
+      expect(world.requests.at(-1)?.body).toContain("Triage the customer's latest message");
+      expect(store.conversation(3, 12)).toMatchObject({ triageMessageId: 0, triageDeadline: 0 });
+      expect(store.readyMessageId(3, 12, "history")).toBe(101);
+      await sync(store, settings);
+      expect(world.replies().filter((text) => text === CALL)).toHaveLength(1);
+    });
+  });
+
+  it("uses a readiness snapshot from before the fetch when a report races the message-page response", async () => {
+    const world = new World();
+    const settings = readinessSettings();
+    world.messages = [{ id: 101, content: "Question", message_type: 0 }];
+    await withStore(async (store) => {
+      await sync(store, settings);
+      world.afterMessagesRead = () => {
+        world.afterMessagesRead = undefined;
+        world.messages.push({ id: 102, content: "Context added during the fetch", message_type: 1, private: true });
+        store.recordTriageReady(3, 12, "profile", 101);
+      };
+      expect(await processConversation(context(store, settings, 1000), 3, 12)).toBe("done");
+      expect(world.replies()).toEqual(["Question"]);
+      await sync(store, settings);
+      expect(world.replies()).toEqual(["Question", "🔒 **Internal note**\nContext added during the fetch", CALL]);
+    });
+  });
+
+  it("times out at the first deadline, coalescing follow-ups without spending their budgets", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const started = Date.now();
+    const warn = vi.spyOn(log, "warn");
+    const world = new World();
+    const settings = readinessSettings(["profile", "history"]);
+    world.messages = [{ id: 101, content: "First", message_type: 0 }];
+    await withStore(async (store) => {
+      await sync(store, settings);
+      expect(store.conversation(3, 12)?.triageDeadline).toBe(started + 30000);
+      vi.setSystemTime(started + 20000);
+      world.messages.push({ id: 102, content: "Latest", message_type: 0 });
+      store.recordTriageReady(3, 12, "profile", 102);
+      store.recordTriageReady(3, 12, "history", 101);
+      await sync(store, settings);
+      expect(store.conversation(3, 12)).toMatchObject({ triageMessageId: 102, triageDeadline: started + 30000 });
+      expect(store.get("triage:3:101")).toBeUndefined();
+      expect(store.get("triage:3:102")).toBeUndefined();
+      expect(world.replies()).not.toContain(CALL);
+      vi.setSystemTime(started + 30000);
+      await sync(store, settings);
+      await sync(store, settings);
+      expect(world.replies()).toEqual(["First", "Latest", CALL]);
+      expect(store.get("triage:3:101")).toBeUndefined();
+      expect(store.get("triage:3:102")).toMatch(/^hour:/);
+      expect(warn).toHaveBeenCalledWith("triage called without context", {
+        accountId: 3,
+        conversationId: 12,
+        messageId: 102,
+        missingSources: "history",
+      });
+      const hour = new Date().toISOString().slice(0, 13);
+      // Reading the next counter value proves only one reservation was counted.
+      expect(store.increment(`triage:3:12:${hour}`)).toBe(2);
+      expect(store.increment(`triage:${hour}`)).toBe(2);
+    });
+  });
+
+  it.each(["answered", "resolved", "snoozed", "pending"])(
+    "immediately notes why the bot was not called when the waiting ticket becomes %s",
+    async (status) => {
+      const world = new World();
+      const settings = readinessSettings();
+      world.messages = [{ id: 101, content: "Question", message_type: 0 }];
+      await withStore(async (store) => {
+        await sync(store, settings);
+        if (status === "answered") world.messages.push({ id: 102, content: "Answer", message_type: 1 });
+        else world.conversation.status = status;
+        await sync(store, settings);
+        expect(world.replies().at(-1)).toBe(HANDLED);
+        expect(world.replies()).not.toContain(CALL);
+        expect(store.conversation(3, 12)).toMatchObject({ triageMessageId: 0, triageAnswered: 0, triageDeadline: 0 });
+        expect(store.get("triage:3:101")).toBe("answered");
+      });
+    },
+  );
+
+  it("retains an owed call after a failed call and counts the successful retry once", async () => {
+    const world = new World();
+    const settings = readinessSettings();
+    world.messages = [{ id: 101, content: "Question", message_type: 0 }];
+    await withStore(async (store) => {
+      await sync(store, settings);
+      store.recordTriageReady(3, 12, "profile", 101);
+      world.threadFailure = () => json({ message: "unavailable" }, { status: 503 });
+      await expect(sync(store, settings)).rejects.toThrow();
+      expect(store.conversation(3, 12)?.triageMessageId).toBe(101);
+      world.threadFailure = undefined;
+      await sync(store, settings);
+      await sync(store, settings);
+      // The HTTP fake records attempts, including the one rejected by Discord.
+      expect(world.replies().filter((text) => text === CALL)).toHaveLength(2);
+      const hour = new Date().toISOString().slice(0, 13);
+      expect(store.increment(`triage:3:12:${hour}`)).toBe(2);
+      expect(store.increment(`triage:${hour}`)).toBe(2);
+      expect(store.conversation(3, 12)).toMatchObject({ triageMessageId: 0, triageDeadline: 0 });
+    });
+  });
+
+  it("immediately clears an owed call when a new message is held by a pending inbox bot", async () => {
+    const world = new World();
+    const settings = readinessSettings();
+    world.messages = [{ id: 101, content: "Question", message_type: 0 }];
+    await withStore(async (store) => {
+      await sync(store, settings);
+      world.conversation.status = "pending";
+      world.bot = { id: 9, account_id: 3 };
+      world.messages.push({ id: 102, content: "Follow-up held for the inbox bot", message_type: 0 });
+      expect(await processConversation(context(store, settings), 3, 12)).toBe("pending");
+      expect(world.replies()).toEqual(["Question", HANDLED]);
+      expect(store.conversation(3, 12)).toMatchObject({ cursor: 101, triageMessageId: 0, triageDeadline: 0 });
+    });
+  });
+
+  it.each(["account", "inbox"])(
+    "clears an owed readiness deadline when its %s leaves the configured scope",
+    async (scope) => {
+      const world = new World();
+      const settings = readinessSettings();
+      world.messages = [{ id: 101, content: "Question", message_type: 0 }];
+      await withStore(async (store) => {
+        await sync(store, settings);
+        const accounts =
+          scope === "account"
+            ? settings.config.accounts.filter((account) => account.id !== 3)
+            : settings.config.accounts.map((account) => ({ ...account, inboxIds: [99] }));
+        const filtered = testSettings(
+          { ...settings.config, accounts },
+          { TRIAGE_READY_SECRETS: JSON.stringify(settings.secrets.TRIAGE_READY_SECRETS) },
+        );
+        await sync(store, filtered);
+        expect(store.conversation(3, 12)).toMatchObject({ triageMessageId: 0, triageDeadline: 0 });
+        expect(context(store, filtered).relay.wakeAt(3, 12)).toBeUndefined();
+        expect(world.replies()).toEqual(["Question"]);
       });
     },
   );

@@ -119,7 +119,8 @@ export class Conversation extends DurableObject<Env> {
         isUnknownCard(row.cardId) ||
         // A post from before cards gets its card while its ticket is not resolved.
         (row.cardId === undefined && listed.status !== "resolved"));
-    if (!behind && !stale && this.store.get(HELD_KEY) === undefined) return;
+    const triageDue = row?.triageMessageId && (!row.triageDeadline || row.triageDeadline <= Date.now());
+    if (!behind && !stale && !triageDue && this.store.get(HELD_KEY) === undefined) return;
     this.enqueue({ type: "conversation", accountId, conversationId });
     await this.schedule();
   }
@@ -149,6 +150,17 @@ export class Conversation extends DurableObject<Env> {
     this.store.set(answerKey(answer.answerId), answer.draft, ANSWER_TTL_MS);
     this.enqueue({ type: "answer", ...ticket, answerId: answer.answerId, replyTo: answer.replyTo });
     await this.schedule();
+  }
+
+  /** Durably records a context service's report, then wakes the job to read Chatwoot afresh. */
+  async triageReady(ready: {
+    accountId: number;
+    conversationId: number;
+    source: string;
+    messageId: number;
+  }): Promise<void> {
+    this.store.recordTriageReady(ready.accountId, ready.conversationId, ready.source, ready.messageId);
+    await this.enqueueConversation(ready.accountId, ready.conversationId);
   }
 
   /** The draft the triage bot's hook sent with an answer, while it is kept. */
@@ -214,7 +226,7 @@ export class Conversation extends DurableObject<Env> {
             this.store.delete(HELD_KEY);
             await this.releaseThread(payload.accountId, payload.conversationId);
             this.store.completeJob(job);
-            // An announcement waiting for Chatwoot's assignment line runs on its own once its notice is due.
+            // Owed announcements and triage calls run on their deadlines without another webhook.
             const wake = services.relay.wakeAt(payload.accountId, payload.conversationId);
             if (wake !== undefined) this.enqueue(payload, wake);
           }

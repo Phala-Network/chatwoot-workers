@@ -99,6 +99,8 @@ export interface PostFields {
   triageMessageId: number;
   /** 1 once a public reply followed that message. */
   triageAnswered: number;
+  /** Deadline of the first owed call (ms); follow-ups do not extend it. 0 after the call is cleared. */
+  triageDeadline: number;
   /**
    * The subject the post's title ends with and the title last applied; unset for a post whose
    * title was not recorded (adopted, or created before titles were recorded).
@@ -130,6 +132,8 @@ export interface RelayStore {
   ): { [Field in keyof PostFields]: PostFields[Field] | undefined } | undefined;
   /** Records the given fields. */
   updateConversation(accountId: number, conversationId: number, patch: Partial<PostFields>): void;
+  /** The largest Chatwoot message id a readiness source reported for the conversation, or 0. */
+  readyMessageId(accountId: number, conversationId: number, source: string): number;
   /** Ids of the Discord messages posted so far for a Chatwoot message, in order. */
   postedParts(accountId: number, conversationId: number, messageId: number): string[];
   /** The first Discord message of the Chatwoot message that Discord message `discordId` is part of. */
@@ -284,7 +288,11 @@ export class Relay {
     }
     if (this.notifier.notifies(message)) store.updateConversation(accountId, conversation.id, { announcePending: 1 });
     if (this.notifier.callsTriage(message)) {
-      store.updateConversation(accountId, conversation.id, { triageMessageId: message.id, triageAnswered: 0 });
+      store.updateConversation(accountId, conversation.id, {
+        triageMessageId: message.id,
+        triageAnswered: 0,
+        triageDeadline: this.triageDeadline(accountId, conversation.id),
+      });
     } else if (message.answers && store.conversation(accountId, conversation.id)?.triageMessageId) {
       store.updateConversation(accountId, conversation.id, { triageAnswered: 1 });
     }
@@ -360,14 +368,45 @@ export class Relay {
   }
 
   /**
-   * When the conversation's job should run again without new events: while an announcement waits for Chatwoot's
-   * assignment line, once its notice is due (see announceAssignee).
+   * When the conversation's job should run again without new events: the first deadline among
+   * an owed triage call and an announcement waiting for Chatwoot's assignment line.
    */
   wakeAt(accountId: number, conversationId: number): number | undefined {
     const post = this.options.store.conversation(accountId, conversationId);
-    return post?.announcePending && post.assigneeWaitSince
-      ? post.assigneeWaitSince + ASSIGNMENT_LINE_WAIT_MS
-      : undefined;
+    const announcement =
+      post?.announcePending && post.assigneeWaitSince ? post.assigneeWaitSince + ASSIGNMENT_LINE_WAIT_MS : undefined;
+    const triage = post?.triageMessageId && this.options.triage?.ready ? post.triageDeadline : undefined;
+    const deadlines = [announcement, triage].filter((at): at is number => at !== undefined && at > 0);
+    return deadlines.length ? Math.min(...deadlines) : undefined;
+  }
+
+  /**
+   * Snapshot before the run reads Chatwoot. A report received during an API await must wait for
+   * the next run: its note may have been written after this run fetched its last message page.
+   */
+  readiness(accountId: number, conversationId: number): ReadonlyMap<string, number> {
+    return new Map(
+      (this.options.triage?.ready?.sources ?? []).map((source) => [
+        source,
+        this.options.store.readyMessageId(accountId, conversationId, source),
+      ]),
+    );
+  }
+
+  private triageDeadline(accountId: number, conversationId: number): number {
+    const ready = this.options.triage?.ready;
+    if (!ready) return 0;
+    const post = this.options.store.conversation(accountId, conversationId);
+    return post?.triageDeadline || (this.options.now?.() ?? new Date()).getTime() + ready.timeoutSeconds * 1000;
+  }
+
+  /** Clears the owed call and its deadline together, including when a ticket leaves the relay's scope. */
+  clearTriage(accountId: number, conversationId: number): void {
+    this.options.store.updateConversation(accountId, conversationId, {
+      triageMessageId: 0,
+      triageAnswered: 0,
+      triageDeadline: 0,
+    });
   }
 
   /**
@@ -392,15 +431,39 @@ export class Relay {
    * longer open, or a budget is used up), a note says why, and nothing is owed any more. True when
    * the call is owed: `callTriage` makes it last in the run.
    */
-  async triage(accountId: number, conversation: RelayConversation): Promise<boolean> {
-    const { store } = this.options;
+  async triage(
+    accountId: number,
+    conversation: RelayConversation,
+    readiness = this.readiness(accountId, conversation.id),
+  ): Promise<boolean> {
+    const { store, triage } = this.options;
     const recorded = store.conversation(accountId, conversation.id);
     const messageId = recorded?.triageMessageId;
     if (!messageId) return false;
+    let missing: string[] = [];
+    if (triage?.ready && conversation.status === "open" && recorded.triageAnswered !== 1) {
+      missing = triage.ready.sources.filter((source) => (readiness.get(source) ?? 0) < messageId);
+      if (missing.length) {
+        // Also initializes deadlines for calls already owed when readiness was enabled.
+        const deadline = this.triageDeadline(accountId, conversation.id);
+        store.updateConversation(accountId, conversation.id, { triageDeadline: deadline });
+        if ((this.options.now?.() ?? new Date()).getTime() < deadline) return false;
+      }
+    }
     const decision = await this.notifier.triage(accountId, conversation, messageId, recorded?.triageAnswered === 1);
-    if (decision && "call" in decision) return true;
+    if (decision && "call" in decision) {
+      if (missing.length) {
+        log.warn("triage called without context", {
+          accountId,
+          conversationId: conversation.id,
+          messageId,
+          missingSources: missing.join(", "),
+        });
+      }
+      return true;
+    }
     if (decision) await this.notify(accountId, conversation, decision.note);
-    store.updateConversation(accountId, conversation.id, { triageMessageId: 0, triageAnswered: 0 });
+    this.clearTriage(accountId, conversation.id);
     return false;
   }
 
@@ -421,7 +484,7 @@ export class Relay {
       });
       if (posted === undefined) return;
     }
-    store.updateConversation(accountId, conversation.id, { triageMessageId: 0, triageAnswered: 0 });
+    this.clearTriage(accountId, conversation.id);
   }
 
   /**

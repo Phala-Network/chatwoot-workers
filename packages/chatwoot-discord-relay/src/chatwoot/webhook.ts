@@ -13,9 +13,9 @@ const CONVERSATION_EVENTS = new Set(["conversation_updated", "conversation_statu
 
 // A conversation event is synced at once. The activity message for its change ("Assigned to …",
 // "Resolved by …") sends no webhook (`webhook_sendable?` in app/models/concerns/message_filter_helpers.rb
-// at v4.18.0), but Conversations::ActivityMessageJob creates it on Sidekiq's `high` queue, while the
-// event's webhook takes two jobs (EventDispatcherJob, then WebhookJob on `medium`): it is there by
-// then. One created later still updates the conversation's last activity, so the sweep relays it.
+// at v4.18.0). Conversations::ActivityMessageJob creates it asynchronously on Sidekiq's `high`
+// queue, so it may arrive after the event's webhook. It updates the conversation's last activity,
+// so the sweep relays it even when the event's run did not see it yet.
 
 type WebhookTarget =
   | { type: "conversation"; accountId: number; conversationId: number }
