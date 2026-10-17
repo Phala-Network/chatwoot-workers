@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Budget } from "../../../shared/budget.ts";
 import { chatwootClient } from "../../../shared/chatwoot/api.ts";
+import { Conversation } from "../src/conversation.ts";
 import { DiscordForum } from "../src/discord/forum.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
 import worker from "../src/index.ts";
@@ -1709,7 +1710,16 @@ describe("triage readiness hooks", () => {
     const chatwoot = chatwootClient("https://chatwoot.example.com", "relay-token", fetch);
     const listed = await chatwoot.getConversation(3, id);
     if (!listed) throw new Error("fixture conversation missing");
-    await runInDurableObject(conversationObject(id), async (instance, state) => {
+    const settings = await loadSettings(env);
+    await runInDurableObject(conversationObject(id), async (_instance, state) => {
+      const instance = new Conversation(state, {
+        ...env,
+        CONFIG: {
+          ...settings.config,
+          triage: { ...settings.config.triage, ready: { sources: ["profile"] } },
+        },
+        TRIAGE_READY_SECRETS: JSON.stringify({ profile: "readiness-secret-0123456789abcdef" }),
+      });
       const store = new Store(state.storage.sql);
       store.updateConversation(3, id, { triageMessageId: 101, triageDeadline: Date.now() + 30000 });
       await instance.reconcile(3, id, listed);
@@ -1721,6 +1731,41 @@ describe("triage readiness hooks", () => {
     await drain();
     await runInDurableObject(conversationObject(id), async (_instance, state) => {
       expect(new Store(state.storage.sql).conversation(3, id)?.triageMessageId).toBe(0);
+    });
+  });
+
+  it("without readiness, reconciles only behind, stale, or held conversations even with an owed call", async () => {
+    const id = 84;
+    expect((await loadSettings(env)).config.triage.ready).toBeUndefined();
+    world.conversation(id, [{ id: 101, content: "Question", message_type: 0 }]);
+    await chatwootWebhook(created(id));
+    await drain();
+    const chatwoot = chatwootClient("https://chatwoot.example.com", "relay-token", fetch);
+    const listed = await chatwoot.getConversation(3, id);
+    if (!listed) throw new Error("fixture conversation missing");
+    await runInDurableObject(conversationObject(id), async (instance, state) => {
+      const store = new Store(state.storage.sql);
+      store.updateConversation(3, id, { triageMessageId: 101 });
+      state.storage.sql.exec("UPDATE conversations SET triage_deadline = NULL");
+      await instance.reconcile(3, id, listed);
+      expect(store.nextWakeup()).toBeUndefined();
+      store.updateConversation(3, id, { triageDeadline: Date.now() - 1 });
+      await instance.reconcile(3, id, listed);
+      expect(store.nextWakeup()).toBeUndefined();
+
+      // These are the same three queue reasons used before readiness was introduced.
+      for (const reason of ["behind", "stale", "held"]) {
+        if (reason === "held") store.set("held", "101");
+        await instance.reconcile(3, id, {
+          ...listed,
+          ...(reason === "behind" ? { messages: [{ id: 102 }] } : {}),
+          ...(reason === "stale" ? { status: "resolved" } : {}),
+        });
+        expect(store.nextDueJob()?.key, reason).toBe(`conversation:3:${id}`);
+        store.deleteJob(`conversation:3:${id}`);
+      }
+      store.delete("held");
+      await state.storage.deleteAlarm();
     });
   });
 });

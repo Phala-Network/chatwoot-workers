@@ -119,7 +119,8 @@ export class Conversation extends DurableObject<Env> {
         isUnknownCard(row.cardId) ||
         // A post from before cards gets its card while its ticket is not resolved.
         (row.cardId === undefined && listed.status !== "resolved"));
-    const triageDue = row?.triageMessageId && (!row.triageDeadline || row.triageDeadline <= Date.now());
+    const triageDue =
+      settings.config.triage.ready && row?.triageMessageId && (!row.triageDeadline || row.triageDeadline <= Date.now());
     if (!behind && !stale && !triageDue && this.store.get(HELD_KEY) === undefined) return;
     this.enqueue({ type: "conversation", accountId, conversationId });
     await this.schedule();
