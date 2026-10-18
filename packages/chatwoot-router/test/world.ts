@@ -24,6 +24,8 @@ export const KINDS = {
 };
 export const CW = "chatwoot.example.com/api/v1/accounts/1/conversations/5";
 export const JEV = "api.typesafe.ai/v1/systemone";
+export const BEFORE_HANDOFF = "before-handoff.example.com/hook";
+export const BEFORE_HANDOFF_SECRET = "before-handoff-test-secret-123456789012345";
 export const incoming = (id: number, content = "Please help with my invoice"): ChatwootMessage => ({
   id,
   content,
@@ -46,8 +48,12 @@ export class MemoryStore implements RoutingStore {
     this.values.set(key, value);
   }
 }
-export function context(store = new MemoryStore(), routing: object = ROUTING) {
-  const settings = testSettings({ routing });
+export function context(
+  store = new MemoryStore(),
+  routing: object = ROUTING,
+  secretOverrides: Record<string, string> = {},
+) {
+  const settings = testSettings({ routing }, secretOverrides);
   const fetch = (request: Request) => globalThis.fetch(request);
   return { settings, store, chatwoot: chatwootClient(settings.config.chatwoot.baseUrl, "user-token", fetch), fetch };
 }
@@ -65,12 +71,14 @@ export interface Ticket {
   /** The contact's address, and the conversation's channel. */
   email?: string;
   channel?: string;
+  hmacVerified?: boolean | null;
   labels?: string[];
   messages?: ChatwootMessage[];
   bot?: { id: number; account_id: number } | null;
   /** Fail before the action, or lose its response after Chatwoot applied it. */
   fail?: Record<string, number>;
   lose?: Record<string, number>;
+  beforeHandoff?: { status?: number };
   during?: (operation: string) => void;
 }
 export interface Answers {
@@ -124,6 +132,7 @@ export function world(ticket: Ticket = {}, answers: Answers = { owner: ["cloud",
                   blocked: ticket.blocked,
                 },
                 channel: ticket.channel,
+                hmac_verified: ticket.hmacVerified,
               },
             });
       }),
@@ -190,6 +199,10 @@ export function world(ticket: Ticket = {}, answers: Answers = { owner: ["cloud",
             ),
           ),
         });
+      }),
+      on("POST", BEFORE_HANDOFF, () => {
+        ticket.during?.("before-handoff");
+        return json({}, { status: ticket.beforeHandoff?.status ?? 200 });
       }),
     ),
   };

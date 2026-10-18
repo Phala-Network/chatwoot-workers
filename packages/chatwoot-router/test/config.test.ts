@@ -21,6 +21,37 @@ describe("router configuration", () => {
     expect(parseSettings(config, secrets).config.routing.endpoint).toBe("https://api.typesafe.ai/v1/systemone");
   });
 
+  it("validates the optional before-handoff hook and defaults its timeout", () => {
+    const hook = { url: "https://hooks.example.com/before-handoff" };
+    expect(
+      parseSettings(
+        { ...config, routing: { ...config.routing, beforeHandoff: hook } },
+        { ...secrets, BEFORE_HANDOFF_SECRET: "x".repeat(32) },
+      ).config.routing.beforeHandoff,
+    ).toEqual({ ...hook, timeoutSeconds: 20 });
+    expect(() => parseSettings({ ...config, routing: { ...config.routing, beforeHandoff: hook } }, secrets)).toThrow(
+      /BEFORE_HANDOFF_SECRET/,
+    );
+    expect(() =>
+      parseSettings(
+        { ...config, routing: { ...config.routing, beforeHandoff: hook } },
+        { ...secrets, BEFORE_HANDOFF_SECRET: "too-short" },
+      ),
+    ).toThrow(/BEFORE_HANDOFF_SECRET/);
+    expect(
+      configSchema.safeParse({
+        ...config,
+        routing: { ...config.routing, beforeHandoff: { url: "http://hooks.example.com" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      configSchema.safeParse({
+        ...config,
+        routing: { ...config.routing, beforeHandoff: { url: hook.url, timeoutSeconds: 0 } },
+      }).success,
+    ).toBe(false);
+  });
+
   it.each(["http://jev.example.com/v1/systemone", "ftp://jev.example.com/v1/systemone", "not a URL"])(
     "rejects an invalid or non-HTTPS endpoint for TypeSafe's System One API: %s",
     (endpoint) => {

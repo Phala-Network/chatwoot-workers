@@ -2,3 +2,5 @@ CHATWOOT_TOKEN=replace-with-user-token
 CHATWOOT_AGENT_BOT_SECRETS={"1":"replace-with-bot-webhook-secret"}
 CHATWOOT_AGENT_BOT_TOKENS={"1":"replace-with-bot-token"}
 TYPESAFE_API_KEY=replace-with-typesafe-key
+# Required only when routing.beforeHandoff.url is configured.
+# BEFORE_HANDOFF_SECRET=replace-with-a-random-secret-of-at-least-32-characters

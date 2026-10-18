@@ -19,6 +19,7 @@ export default defineConfig({
       CHATWOOT_AGENT_BOT_SECRETS: bindings.secret(),
       TYPESAFE_API_KEY: bindings.secret(),
       CHATWOOT_AGENT_BOT_TOKENS: bindings.secret(),
+      BEFORE_HANDOFF_SECRET: bindings.secret(),
       CONFIG: bindings.json({
         chatwoot: { baseUrl: "https://chatwoot.example.com" },
         routing: {
