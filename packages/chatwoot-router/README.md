@@ -17,9 +17,11 @@ is each routed account's native agent bot, connected to the inboxes it should ro
    and asks TypeSafe's System One API (`/v1/systemone`, model `routing.model`, Jev by default; `routing.endpoint`
    may point to another deployment) for the owner, topic, kind, and whether there is a request yet.
 3. It applies the topic and kind labels, sends the kind's canned reply if it has one (at most once per
-   conversation), and ends the turn: the kind's resolved or snoozed status, the confident owner, or a handoff to
-   people (`status=open`). A greeting with no request yet stays pending until the customer says more, for up to 30
-   minutes (an email that asks for nothing will not say more); then it is routed on. A resolved
+   conversation), then optionally calls the configured before-handoff service. The service can write context to the
+   conversation before the turn ends: it returns success only after its write is complete. The router then ends the
+   turn: the kind's resolved or snoozed status, the confident owner, or a handoff to people (`status=open`). A greeting
+   with no request yet stays pending until the customer says more, for up to 30 minutes (an email that asks for nothing
+   will not say more); then it is routed on. A resolved
    ticket that a customer message reopens keeps its owner: its kind may still end it (a thanks is resolved),
    otherwise it goes back to the owner.
 4. Anything uncertain hands off to people: an unclear owner, a failed or unconfirmed reply, a human replying,
@@ -107,6 +109,7 @@ no unpublished shared package needs installing.
     },
     "topics": { "billing": "Invoices and payments.", "technical": "Product troubleshooting." },
     "minConfidence": 0.7,
+    "beforeHandoff": { "url": "https://service.example.com/router/before-handoff", "timeoutSeconds": 20 },
     "kinds": { "1": { "spam": { "covers": "Unsolicited advertising.", "status": "resolved" } } }
   }
 }
@@ -119,6 +122,9 @@ no unpublished shared package needs installing.
 | `routing.endpoint` | HTTPS URL | `https://api.typesafe.ai/v1/systemone` | TypeSafe's System One API endpoint; may point to another deployment of that API, for example a proxy or gateway. Redirects are refused. |
 | `routing.model` | non-empty string | `jev-1.13.0` | Model sent to TypeSafe's System One API; Jev by default. |
 | `routing.minConfidence` | number 0.5–1 | `0.7` | Probability an answer needs before it is applied. |
+| `routing.beforeHandoff` | object | unset | Optional service call completed before the router ends a pending bot turn. |
+| `routing.beforeHandoff.url` | HTTPS URL | required when configured | Endpoint that writes any context needed before handoff. |
+| `routing.beforeHandoff.timeoutSeconds` | positive integer | `20` | Maximum time for the endpoint request, including its response body. |
 | `routing.botIds` | object: account id → positive safe integer | required | Brand bot id for every routed account, and no others. |
 | `routing.accounts` | object: account id → (owner name → owner) | required | Routed accounts and the owners Jev chooses from. Owner names are 1–40 lower-case letters, digits, or `_`; `unclear` is reserved. |
 | `routing.accounts.<id>.<name>.assignee` | integer > 0 | required | Chatwoot user id to assign. |
@@ -138,9 +144,58 @@ no unpublished shared package needs installing.
 | `CHATWOOT_AGENT_BOT_TOKENS` | Yes | JSON object of bot access tokens by account id, e.g. `{"1":"<token>"}`. All mutations use the bot token. |
 | `CHATWOOT_AGENT_BOT_SECRETS` | Yes | JSON object of bot webhook secrets by account id, e.g. `{"1":"<secret>"}`. |
 | `TYPESAFE_API_KEY` | Yes | TypeSafe API key for System One API requests. |
+| `BEFORE_HANDOFF_SECRET` | When `routing.beforeHandoff.url` is set | At least 32 characters; signs requests to that endpoint. |
 
 Both bot-secret maps require nonempty values and exactly the `routing.accounts` keys. Missing/invalid entries
 fail startup; `/healthz` returns 503 without credentials in its response. All secrets use `bindings.secret()`.
+
+### Before-handoff hook
+
+When `routing.beforeHandoff` is configured, the router calls its HTTPS endpoint once before each successful pending-turn
+release. This covers a handoff to people (`status=open`), a kind's `resolved` or `snoozed` status, an owner assignment,
+and the open mutation used when the inbox bot is disconnected. A person or another bot taking over a ticket, and the
+unassignment of a bot from an already non-pending conversation, do not end a pending bot turn and do not call the hook.
+
+The request is a `POST` with this JSON body. `turnId` is the status-activity boundary returned by the router's turn read;
+it is `0` for the first turn, remains stable when that turn is retried, and changes when a conversation is reopened.
+`channel` and `hmacVerified` are `null` when Chatwoot has no value; `hmacVerified` otherwise carries Chatwoot's
+boolean contact-inbox verification result.
+
+```json
+{
+  "accountId": 42,
+  "conversationId": 9001,
+  "turnId": 17,
+  "contact": { "email": "customer@example.com", "blocked": false },
+  "channel": "Channel::WebWidget",
+  "hmacVerified": true
+}
+```
+
+The exact UTF-8 body bytes are signed with HMAC-SHA256 using `BEFORE_HANDOFF_SECRET` and the Unix timestamp:
+`HMAC-SHA256(secret, "<x-timestamp>.<raw body>")`. Headers are:
+
+```text
+x-timestamp: 1760000000
+x-signature: sha256=<64 lowercase hexadecimal characters>
+content-type: application/json
+```
+
+For example, a receiver can verify and handle a request with the same raw body before returning success:
+
+```sh
+body='{"accountId":42,"conversationId":9001,"turnId":17,"contact":{"email":"customer@example.com","blocked":false},"channel":"Channel::WebWidget","hmacVerified":true}'
+timestamp="$(date +%s)"
+signature="$(printf '%s.%s' "$timestamp" "$body" | openssl dgst -sha256 -hmac "$BEFORE_HANDOFF_SECRET" -hex | sed 's/^.* //')"
+curl --fail-with-body -X POST "https://service.example.com/router/before-handoff" \
+  -H "content-type: application/json" -H "x-timestamp: $timestamp" -H "x-signature: sha256=$signature" \
+  --data "$body"
+```
+
+The receiver must be idempotent for `(accountId, conversationId, turnId)` because retries can repeat a request after a
+timeout or network failure. It should return a 2xx response only after all context it adds for that turn is written (or
+when nothing is due). A non-2xx response, timeout, or network error is logged without credentials or request body and
+is raised by the router; the pending ticket then remains pending for the existing Durable Object retry and sweep.
 
 ## Upgrade and rollback
 

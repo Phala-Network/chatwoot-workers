@@ -33,6 +33,8 @@ export interface RelayConversation {
   /** open, pending, snoozed, or resolved. */
   status?: string | undefined;
   channel?: string | null;
+  /** Whether Chatwoot verified the contact's HMAC for this inbox. */
+  hmacVerified?: boolean | null;
   /** urgent, high, medium, low, or null. */
   priority?: string | null;
   labels: string[];

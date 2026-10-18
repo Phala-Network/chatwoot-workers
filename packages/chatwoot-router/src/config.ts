@@ -44,6 +44,13 @@ export const configSchema = z
           z.string().min(1).max(1000),
         )
         .optional(),
+      /** A signed service call that must complete before a pending bot turn is handed off or assigned. */
+      beforeHandoff: z
+        .strictObject({
+          url: z.url({ protocol: /^https$/ }),
+          timeoutSeconds: z.number().int().min(1).default(20),
+        })
+        .optional(),
       /**
        * Per Chatwoot account id: kinds of ticket Jev recognizes, by a short name, and what is done,
        * once, when it does (see src/routing.ts). Unset: none.
@@ -108,6 +115,7 @@ export const secretsSchema = z.object({
   CHATWOOT_AGENT_BOT_SECRETS: jsonRecord,
   TYPESAFE_API_KEY: z.string().min(1),
   CHATWOOT_AGENT_BOT_TOKENS: jsonRecord,
+  BEFORE_HANDOFF_SECRET: z.string().min(32).optional(),
 });
 
 type Config = z.infer<typeof configSchema>;
@@ -132,6 +140,9 @@ export function buildSettings(config: Config, secrets: Secrets): Settings {
     if (Object.keys(secrets[name]).length !== accounts.length || accounts.some((id) => !secrets[name][id]?.trim())) {
       throw new ConfigError(`Invalid secrets: ${name}: needs exactly the routed accounts`);
     }
+  }
+  if (config.routing.beforeHandoff && !secrets.BEFORE_HANDOFF_SECRET) {
+    throw new ConfigError("Invalid secrets: BEFORE_HANDOFF_SECRET: required when routing.beforeHandoff.url is set");
   }
   return { config, secrets };
 }

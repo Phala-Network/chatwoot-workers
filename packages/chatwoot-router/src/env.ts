@@ -7,4 +7,5 @@ export interface Env extends ConfigEnv {
   CHATWOOT_AGENT_BOT_SECRETS: string;
   TYPESAFE_API_KEY: string;
   CHATWOOT_AGENT_BOT_TOKENS: string;
+  BEFORE_HANDOFF_SECRET?: string;
 }

@@ -524,6 +524,7 @@ export function toRelayConversation(conversationId: number, conversation: Chatwo
     id: conversationId,
     status: conversation.status,
     channel: meta?.channel ?? null,
+    hmacVerified: meta?.hmac_verified ?? null,
     priority: conversation.priority ?? null,
     labels: conversation.labels ?? [],
     contact: {

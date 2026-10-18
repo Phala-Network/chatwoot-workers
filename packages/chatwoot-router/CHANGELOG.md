@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-18
+
+### Added
+
+- An optional signed `routing.beforeHandoff` hook lets a dependent service write context to Chatwoot before the router
+  ends a pending bot turn. The hook is idempotent per conversation turn; failures leave the ticket pending for retry.
+
 ## [0.8.0] - 2026-10-08
 
 ### Changed
@@ -156,7 +163,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.6.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.9.0...HEAD
+[0.9.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.8.0...chatwoot-router@0.9.0
+[0.8.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.7.0...chatwoot-router@0.8.0
 [0.6.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.2...chatwoot-router@0.6.0
 [0.5.2]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.1...chatwoot-router@0.5.2
 [0.5.1]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.0...chatwoot-router@0.5.1

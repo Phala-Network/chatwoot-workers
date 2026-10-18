@@ -6,6 +6,8 @@ import { expectActivity, recordFailure, requestHandoff } from "../src/turn.ts";
 import {
   type Answers,
   activity,
+  BEFORE_HANDOFF,
+  BEFORE_HANDOFF_SECRET,
   CW,
   context,
   incoming,
@@ -55,6 +57,108 @@ describe("Jev input privacy", async () => {
 });
 
 describe("native bot turns", () => {
+  const withHook = (routing: object) => ({
+    ...routing,
+    beforeHandoff: { url: `https://${BEFORE_HANDOFF}` },
+  });
+
+  it("leaves the existing release behavior unchanged when the hook is unset", async () => {
+    const mock = world();
+    await routeConversation(context(), 1, 5);
+    expect(sent(mock.requests, "POST", BEFORE_HANDOFF)).toEqual([]);
+    expect(mock.ticket.status).toBe("open");
+  });
+
+  it.each([
+    ["handoff", ROUTING],
+    ["assignment", ROUTING],
+    ["kind status", KINDS],
+    ["disconnected inbox", ROUTING],
+  ] as const)("calls the hook before the %s release mutation", async (path, routing) => {
+    const mock = world(
+      {
+        ...(path === "handoff" ? { messages: [] } : path === "disconnected inbox" ? { bot: null } : {}),
+        beforeHandoff: {},
+      },
+      path === "kind status" ? { owner: ["unclear", 1], kind: ["spam", 1] } : { owner: ["sales", 1] },
+    );
+    const ctx = context(new MemoryStore(), withHook(routing), { BEFORE_HANDOFF_SECRET });
+    await routeConversation(ctx, 1, 5);
+    const posts = mock.requests.filter((request) => request.method === "POST");
+    const hookIndex = posts.findIndex((request) => request.url.hostname === "before-handoff.example.com");
+    const mutationIndex = posts.findIndex(
+      (request) =>
+        request.url.hostname === "chatwoot.example.com" &&
+        ["toggle_status", "assignments"].some((operation) => request.url.pathname.endsWith(`/${operation}`)),
+    );
+    expect(hookIndex).toBeGreaterThanOrEqual(0);
+    expect(mutationIndex).toBeGreaterThan(hookIndex);
+    if (path === "handoff" || path === "disconnected inbox") expect(mock.ticket.status).toBe("open");
+  });
+
+  it("sends the signed contract body and stable turn id, and changes it after a reopen", async () => {
+    const store = new MemoryStore();
+    const mock = world(
+      { beforeHandoff: {}, email: "customer@example.com", channel: "Channel::WebWidget", hmacVerified: true },
+      { owner: ["unclear", 1], kind: ["spam", 1] },
+    );
+    const ctx = context(store, withHook(KINDS), { BEFORE_HANDOFF_SECRET });
+    await routeConversation(ctx, 1, 5);
+    mock.ticket.status = "pending";
+    mock.ticket.assignee = null;
+    mock.ticket.assigneeType = null;
+    delete mock.ticket.email;
+    delete mock.ticket.channel;
+    mock.ticket.hmacVerified = null;
+    mock.ticket.messages?.push(activity(10, "pending"), incoming(11, "A reopened request"));
+    expectActivity(store, 1, 5, { status: "pending" });
+    await routeConversation(ctx, 1, 5);
+    const hooks = sent(mock.requests, "POST", BEFORE_HANDOFF);
+    expect(hooks).toHaveLength(2);
+    const first = JSON.parse(hooks[0]?.body ?? "null");
+    const second = JSON.parse(hooks[1]?.body ?? "null");
+    expect(first).toMatchObject({
+      accountId: 1,
+      conversationId: 5,
+      turnId: 0,
+      contact: { email: "customer@example.com", blocked: false },
+      channel: "Channel::WebWidget",
+      hmacVerified: true,
+    });
+    expect(second.turnId).toBe(10);
+    expect(second).toMatchObject({ contact: { email: null, blocked: false }, channel: null, hmacVerified: null });
+    expect(hooks[0]?.headers.get("x-timestamp")).toMatch(/^\d{1,12}$/);
+    const timestamp = hooks[0]?.headers.get("x-timestamp") ?? "";
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(BEFORE_HANDOFF_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const signed = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${hooks[0]?.body}`)),
+    );
+    const expected = Array.from(signed, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    expect(hooks[0]?.headers.get("x-signature")).toBe(`sha256=${expected}`);
+  });
+
+  it("keeps the ending mutation pending when the hook fails and retries the same turn", async () => {
+    const mock = world({ beforeHandoff: { status: 503 } }, { owner: ["unclear", 1], kind: ["spam", 1] });
+    const ctx = context(new MemoryStore(), withHook(KINDS), { BEFORE_HANDOFF_SECRET });
+    await expect(routeConversation(ctx, 1, 5)).rejects.toThrow("before-handoff HTTP 503");
+    expect(mock.ticket.status).toBe("pending");
+    expect(mock.ticket.assignee?.id).toBe(1);
+    expect(sent(mock.requests, "POST", `${CW}/toggle_status`)).toEqual([]);
+    expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+    mock.ticket.beforeHandoff = {};
+    await routeConversation(ctx, 1, 5);
+    const hooks = sent(mock.requests, "POST", BEFORE_HANDOFF);
+    expect(hooks).toHaveLength(2);
+    expect(JSON.parse(hooks[0]?.body ?? "{}").turnId).toBe(JSON.parse(hooks[1]?.body ?? "{}").turnId);
+    expect(mock.ticket.status).toBe("resolved");
+  });
+
   it.each(["open", "resolved", "snoozed"])(
     "releases the brand bot from %s without changing status or sending messages",
     async (status) => {

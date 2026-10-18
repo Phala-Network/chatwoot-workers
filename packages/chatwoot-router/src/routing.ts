@@ -13,6 +13,7 @@ import {
 } from "../../../shared/chatwoot/api.ts";
 import { parseJson } from "../../../shared/json.ts";
 import { errorFields, log } from "../../../shared/log.ts";
+import { beforeHandoff } from "./before-handoff.ts";
 import type { Settings } from "./config.ts";
 import { confirmedReply, replyHistory } from "./reply.ts";
 import { expectActivity, observeStatus, readTurn, requestHandoff } from "./turn.ts";
@@ -146,8 +147,14 @@ export async function routeConversation(
       // Re-read ownership immediately before the mutation; never touch another bot or person.
       if (owns(raw)) {
         const latest = await chatwoot.getConversation(accountId, conversationId);
-        if (latest?.status === "pending" && latest.inbox_id === raw.inbox_id && owns(latest))
+        if (latest?.status === "pending" && latest.inbox_id === raw.inbox_id && owns(latest)) {
+          const conversation = toRelayConversation(conversationId, latest);
+          const turnId = routing.beforeHandoff
+            ? (await readTurn(chatwoot, store, accountId, conversationId)).boundary
+            : 0;
+          await beforeHandoff(ctx, accountId, conversationId, turnId, conversation);
           await bot.setStatus(accountId, conversationId, { status: "open" });
+        }
       }
       return;
     }
@@ -204,7 +211,10 @@ export async function routeConversation(
     requestHandoff(store, accountId, conversationId);
     current ??= await fresh();
     if (current === "defer") return "defer" as const;
-    if (current) await bot.setStatus(accountId, conversationId, { status: "open" });
+    if (current) {
+      await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
+      await bot.setStatus(accountId, conversationId, { status: "open" });
+    }
     return undefined;
   };
   if (turn.handoff || requiresHandoff(turn.messages) || input.count === 0) return handoff();
@@ -279,11 +289,13 @@ export async function routeConversation(
   if (current === "defer" || !current) return current;
   if (current.handoff) return handoff(current);
   if (kind?.status) {
+    await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
     await bot.setStatus(accountId, conversationId, { status: kind.status });
     expectActivity(store, accountId, conversationId, { status: kind.status });
     // Status keeps ai_assignee in Chatwoot. Finish this turn by releasing it without another activity.
     await release();
   } else if (assignee !== undefined && current.raw.meta?.assignee_type === "AgentBot") {
+    await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
     await bot.assign(accountId, conversationId, assignee);
     expectActivity(store, accountId, conversationId, { status: "open" });
   } else {
