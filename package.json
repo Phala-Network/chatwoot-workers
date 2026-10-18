@@ -21,7 +21,7 @@
     "@biomejs/biome": "^2.5.15",
     "@cloudflare/vitest-plugin": "1.4.2",
     "@types/node": "^24.19.1",
-    "cf": "1.0.0-beta.14",
+    "cf": "1.0.0-beta.17",
     "esbuild": "0.28.2",
     "jsonc-parser": "^3.3.1",
     "openapi-fetch": "^0.17.0",
