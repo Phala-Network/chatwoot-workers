@@ -51,7 +51,10 @@ export class Budget {
       this.timeoutMs,
     );
     try {
-      const response = await this.fetchImpl(new Request(request, { signal: controller.signal }));
+      // Preserve a caller's cancellation (for example, a shorter operation-specific timeout) while also
+      // enforcing the budget's upper bound. RequestInit.signal replaces the original signal, so combine them.
+      const signal = AbortSignal.any([request.signal, controller.signal]);
+      const response = await this.fetchImpl(new Request(request, { signal }));
       if (!response.body) {
         clearTimeout(timer);
         return response;
