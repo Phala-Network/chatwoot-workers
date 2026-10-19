@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-19
+
+### Added
+
+- An optional `routing.noRequest` replaces Jev's criterion for a ticket with no request yet, which waits for the
+  customer to say more. A deployment can keep only greetings waiting, so a test that describes a problem is routed.
+  Unset, the criterion is unchanged.
+
 ## [0.9.0] - 2026-10-18
 
 ### Added
@@ -163,7 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.9.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.10.0...HEAD
+[0.10.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.9.0...chatwoot-router@0.10.0
 [0.9.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.8.0...chatwoot-router@0.9.0
 [0.8.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.7.0...chatwoot-router@0.8.0
 [0.6.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.5.2...chatwoot-router@0.6.0

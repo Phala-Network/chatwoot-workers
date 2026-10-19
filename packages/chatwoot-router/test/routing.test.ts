@@ -218,6 +218,15 @@ describe("native bot turns", () => {
     expect(mock.ticket.assignee?.id).toBe(7);
     expect(mock.ticket.status).toBe("open");
   });
+  it.each([
+    ["the default", undefined, /a test/],
+    ["the configured", "Only a greeting.", /^Only a greeting\.$/],
+  ])("asks Jev whether there is a request with %s no-request criterion", async (_, noRequest, criterion) => {
+    const mock = world();
+    await routeConversation(context(new MemoryStore(), { ...ROUTING, noRequest }), 1, 5);
+    const body = JSON.parse(sent(mock.requests, "POST", JEV)[0]?.body ?? "{}");
+    expect(body.questions.request.criteria.none).toMatch(criterion);
+  });
 
   it.each(["startup", "bounty", "spam", "newsletter"])(
     "applies %s in order as the bot and stops after the ending action",
