@@ -23,15 +23,13 @@ const UNCLEAR = "unclear";
 const UNCLEAR_CRITERION =
   "The message has no concrete request, mixes several of the other areas, concerns another product, or cannot be " +
   "assigned to exactly one of them.";
-/** Whether the customer asked for anything yet. */
-const REQUEST_CRITERIA = {
-  request:
-    "The customer asks for support, information, or an action: a question about a product or service, a problem, " +
-    "or something to do, however briefly.",
-  none:
-    'No request yet: a greeting or a check that someone is there (such as "hi" or "hello, anyone there?"), a test, ' +
-    "a name or contact details alone, or a few words that ask for nothing.",
-};
+/** Whether the customer asked for anything yet; `routing.noRequest` replaces the default "none" criterion. */
+const REQUEST_CRITERION =
+  "The customer asks for support, information, or an action: a question about a product or service, a problem, " +
+  "or something to do, however briefly.";
+const NO_REQUEST_CRITERION =
+  'No request yet: a greeting or a check that someone is there (such as "hi" or "hello, anyone there?"), a test, ' +
+  "a name or contact details alone, or a few words that ask for nothing.";
 /** Jev's answer when no kind fits; also a reserved kind name. */
 const NO_KIND = "none";
 const NO_KIND_CRITERION = "None of the other kinds.";
@@ -354,7 +352,7 @@ async function decide(ctx: RoutingContext, owners: Owners, kinds: Kinds | undefi
   questions.request = {
     type: "choice",
     instructions: "Select whether the customer asks for anything in this support ticket, using only the ticket.",
-    criteria: REQUEST_CRITERIA,
+    criteria: { request: REQUEST_CRITERION, none: routing.noRequest ?? NO_REQUEST_CRITERION },
   };
   if (kinds) {
     questions.kind = {

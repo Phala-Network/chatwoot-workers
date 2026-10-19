@@ -122,6 +122,7 @@ no unpublished shared package needs installing.
 | `routing.endpoint` | HTTPS URL | `https://api.typesafe.ai/v1/systemone` | TypeSafe's System One API endpoint; may point to another deployment of that API, for example a proxy or gateway. Redirects are refused. |
 | `routing.model` | non-empty string | `jev-1.13.0` | Model sent to TypeSafe's System One API; Jev by default. |
 | `routing.minConfidence` | number 0.5–1 | `0.7` | Probability an answer needs before it is applied. |
+| `routing.noRequest` | 1–1000 characters | a greeting, a test, contact details alone, or a few words that ask for nothing | Jev's criterion for a ticket with no request yet, which waits for the customer to say more ([How it works](#how-it-works)). |
 | `routing.beforeHandoff` | object | unset | Optional service call completed before the router ends a pending bot turn. |
 | `routing.beforeHandoff.url` | HTTPS URL | required when configured | Endpoint that writes any context needed before handoff. |
 | `routing.beforeHandoff.timeoutSeconds` | positive integer | `20` | Maximum time for the endpoint request, including its response body. |

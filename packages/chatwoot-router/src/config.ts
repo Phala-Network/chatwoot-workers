@@ -44,6 +44,11 @@ export const configSchema = z
           z.string().min(1).max(1000),
         )
         .optional(),
+      /**
+       * What a ticket with no request yet is, as Jev's criterion: such a ticket waits for the customer to say more
+       * (see src/routing.ts). Unset: a greeting, a test, contact details alone, or a few words that ask for nothing.
+       */
+      noRequest: z.string().min(1).max(1000).optional(),
       /** A signed service call that must complete before a pending bot turn is handed off or assigned. */
       beforeHandoff: z
         .strictObject({
