@@ -17,6 +17,8 @@ export const configSchema = z
       model: z.string().min(1).default("jev-1.13.0"),
       /** Jev's probability an answer needs before it is applied. */
       minConfidence: z.number().min(0.5).max(1).default(0.7),
+      /** Instance-wide inbox ids whose unidentified contacts are resolved as spam before Jev. Unset: none. */
+      identifiedOnlyInboxes: z.array(z.number().int().positive()).optional(),
       /** The account's native Chatwoot agent bot. */
       botIds: z.record(accountId, z.number().int().positive()),
       /** Per Chatwoot account id: the owners Jev chooses from, by a short name. */

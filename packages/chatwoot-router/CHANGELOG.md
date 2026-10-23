@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-22
+
+### Added
+
+- Optional `routing.identifiedOnlyInboxes` lists instance-wide inbox ids whose contacts must have an identifier.
+  An explicit null or empty identifier is labeled `spam` and resolved without Jev, a reply, or an owner assignment,
+  including after a customer reopens the ticket. The usual before-handoff hook and bot release still run.
+  Missing/malformed identity data routes normally; conversation fetch failures retain the existing retry.
+  Unset or empty, routing is unchanged.
+
 ## [0.10.0] - 2026-10-19
 
 ### Added
@@ -171,7 +181,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.10.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.11.0...HEAD
+[0.11.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.10.0...chatwoot-router@0.11.0
 [0.10.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.9.0...chatwoot-router@0.10.0
 [0.9.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.8.0...chatwoot-router@0.9.0
 [0.8.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.7.0...chatwoot-router@0.8.0

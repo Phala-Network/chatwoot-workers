@@ -56,6 +56,112 @@ describe("Jev input privacy", async () => {
   });
 });
 
+describe("identified-only inboxes", () => {
+  const routing = { ...ROUTING, identifiedOnlyInboxes: [2] };
+
+  it.each([null, ""])(
+    "resolves identifier %j as spam without Jev, a reply, or a configured spam kind",
+    async (identifier) => {
+      const mock = world({ identifier, labels: ["keep"], messages: [] });
+      const ctx = context(
+        new MemoryStore(),
+        { ...routing, beforeHandoff: { url: `https://${BEFORE_HANDOFF}` } },
+        { BEFORE_HANDOFF_SECRET },
+      );
+      await routeConversation(ctx, 1, 5);
+      expect(mock.ticket.labels).toEqual(["keep", "spam"]);
+      expect(mock.ticket.status).toBe("resolved");
+      expect(mock.ticket.assignee).toBeNull();
+      expect(sent(mock.requests, "POST", JEV)).toEqual([]);
+      expect(sent(mock.requests, "POST", `${CW}/messages`)).toEqual([]);
+      const posts = mock.requests.filter((request) => request.method === "POST");
+      expect(posts.map((request) => `${request.url.hostname}${request.url.pathname}`)).toEqual([
+        `${CW}/labels`,
+        BEFORE_HANDOFF,
+        `${CW}/toggle_status`,
+        `${CW}/assignments`,
+      ]);
+      expect(JSON.parse(posts.at(-1)?.body ?? "{}")).toEqual({ assignee_id: null });
+    },
+  );
+
+  it("routes identified contacts normally", async () => {
+    const mock = world({ identifier: "customer-123" });
+    await routeConversation(context(new MemoryStore(), routing), 1, 5);
+    expect(sent(mock.requests, "POST", JEV)).toHaveLength(1);
+    expect(mock.ticket.status).toBe("open");
+    expect(mock.ticket.assignee?.id).toBe(6);
+    expect(mock.ticket.labels).toEqual(["billing"]);
+  });
+
+  it.each([{ ids: [9] }, { ids: [] }, { ids: undefined }])(
+    "routes anonymous contacts normally when the inbox is not listed: $ids",
+    async ({ ids }) => {
+      const mock = world({ identifier: null });
+      await routeConversation(context(new MemoryStore(), { ...ROUTING, identifiedOnlyInboxes: ids }), 1, 5);
+      expect(sent(mock.requests, "POST", JEV)).toHaveLength(1);
+      expect(mock.ticket.status).toBe("open");
+      expect(mock.ticket.labels).toEqual(["billing"]);
+    },
+  );
+
+  it.each([undefined, 42])("logs unavailable/malformed identity %j and routes normally", async (identifier) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const mock = world({ identifier });
+    await routeConversation(context(new MemoryStore(), routing), 1, 5);
+    expect(warn).toHaveBeenCalledWith(
+      JSON.stringify({
+        level: "warn",
+        message: "contact identifier unavailable; routing normally",
+        accountId: 1,
+        conversationId: 5,
+      }),
+    );
+    expect(sent(mock.requests, "POST", JEV)).toHaveLength(1);
+    expect(mock.ticket.status).toBe("open");
+    expect(mock.ticket.labels).toEqual(["billing"]);
+  });
+
+  it("does not mutate after a conversation lookup failure and can retry", async () => {
+    const mock = world({ identifier: null, fail: { read: 1 } });
+    const ctx = context(new MemoryStore(), routing);
+    await expect(routeConversation(ctx, 1, 5)).rejects.toThrow("Chatwoot get conversation failed with HTTP 503");
+    expect(mock.requests.filter((request) => request.method === "POST")).toEqual([]);
+    await routeConversation(ctx, 1, 5);
+    expect(mock.ticket.status).toBe("resolved");
+    expect(mock.ticket.labels).toEqual(["spam"]);
+    expect(sent(mock.requests, "POST", JEV)).toEqual([]);
+  });
+
+  it("resolves an unidentified contact again after a customer message reopens the ticket", async () => {
+    const mock = world({ identifier: null });
+    const ctx = context(new MemoryStore(), routing);
+    await routeConversation(ctx, 1, 5);
+    mock.ticket.status = "pending";
+    mock.ticket.messages?.push(incoming(3, "Another request"));
+    await routeConversation(ctx, 1, 5);
+    expect(mock.ticket.status).toBe("resolved");
+    expect(sent(mock.requests, "POST", `${CW}/labels`)).toHaveLength(1);
+    expect(sent(mock.requests, "POST", `${CW}/toggle_status`)).toHaveLength(2);
+    expect(sent(mock.requests, "POST", `${CW}/messages`)).toEqual([]);
+    expect(sent(mock.requests, "POST", JEV)).toEqual([]);
+  });
+
+  it("defers when the contact becomes identified before a mutation, then routes normally", async () => {
+    const mock = world({ identifier: null });
+    mock.ticket.during = (operation) => {
+      if (operation === "read-messages") mock.ticket.identifier = "customer-123";
+    };
+    const ctx = context(new MemoryStore(), routing);
+    expect(await routeConversation(ctx, 1, 5)).toBe("defer");
+    expect(mock.requests.filter((request) => request.method === "POST")).toEqual([]);
+    await routeConversation(ctx, 1, 5);
+    expect(sent(mock.requests, "POST", JEV)).toHaveLength(1);
+    expect(mock.ticket.status).toBe("open");
+    expect(mock.ticket.labels).toEqual(["billing"]);
+  });
+});
+
 describe("native bot turns", () => {
   const withHook = (routing: object) => ({
     ...routing,

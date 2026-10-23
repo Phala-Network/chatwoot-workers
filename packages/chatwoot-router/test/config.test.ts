@@ -21,6 +21,21 @@ describe("router configuration", () => {
     expect(parseSettings(config, secrets).config.routing.endpoint).toBe("https://api.typesafe.ai/v1/systemone");
   });
 
+  it("accepts optional instance-wide identified-only inbox ids and rejects invalid ids", () => {
+    expect(parseSettings(config, secrets).config.routing.identifiedOnlyInboxes).toBeUndefined();
+    for (const identifiedOnlyInboxes of [[], [2, 3, 5]]) {
+      expect(
+        parseSettings({ ...config, routing: { ...config.routing, identifiedOnlyInboxes } }, secrets).config.routing
+          .identifiedOnlyInboxes,
+      ).toEqual(identifiedOnlyInboxes);
+    }
+    for (const identifiedOnlyInboxes of [[0], [-1], [1.5], ["2"], [9007199254740992], "2"]) {
+      expect(configSchema.safeParse({ ...config, routing: { ...config.routing, identifiedOnlyInboxes } }).success).toBe(
+        false,
+      );
+    }
+  });
+
   it("validates the optional before-handoff hook and defaults its timeout", () => {
     const hook = { url: "https://hooks.example.com/before-handoff" };
     expect(

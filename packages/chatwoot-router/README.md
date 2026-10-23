@@ -12,8 +12,11 @@ is each routed account's native agent bot, connected to the inboxes it should ro
 1. A new ticket in a connected inbox is pending, so Chatwoot sends its events to the router's
    `/chatwoot/agent-bot` webhook. Each conversation is routed by a Durable Object of its own, so a slow request
    for one conversation never delays another.
-2. The router reads the customer's first messages of this turn (redacted, at most three and 1,600 characters; the
-   contact's email domain leads them)
+2. In an inbox listed in `routing.identifiedOnlyInboxes`, a contact whose identifier is explicitly null or empty is
+   labeled `spam` and resolved without Jev, a reply, an owner assignment, or a handoff to people. The usual
+   before-handoff hook runs after the label and before resolution, then the bot is released. The rule applies again
+   if a customer message reopens the ticket. Otherwise, the router reads the customer's first messages of this turn
+   (redacted, at most three and 1,600 characters; the contact's email domain leads them)
    and asks TypeSafe's System One API (`/v1/systemone`, model `routing.model`, Jev by default; `routing.endpoint`
    may point to another deployment) for the owner, topic, kind, and whether there is a request yet.
 3. It applies the topic and kind labels, sends the kind's canned reply if it has one (at most once per
@@ -89,6 +92,8 @@ no unpublished shared package needs installing.
    and account matching. Valid irrelevant events are acknowledged without actions.
 3. Create topic and kind labels and any canned responses in Chatwoot. Canned responses use their short codes and
    are read at send time; customers see the brand bot's name. Chatwoot expands its normal message variables.
+   Create the `spam` label in each account with an inbox listed in `routing.identifiedOnlyInboxes`, even if no spam
+   kind is configured.
 4. After deploying both Workers, connect each bot to the inboxes it routes. No `routing_*` custom attributes or
    definitions are needed. For the relay's Manage card, list every kind name in `router.keepLabels`.
 
@@ -122,6 +127,7 @@ no unpublished shared package needs installing.
 | `routing.endpoint` | HTTPS URL | `https://api.typesafe.ai/v1/systemone` | TypeSafe's System One API endpoint; may point to another deployment of that API, for example a proxy or gateway. Redirects are refused. |
 | `routing.model` | non-empty string | `jev-1.13.0` | Model sent to TypeSafe's System One API; Jev by default. |
 | `routing.minConfidence` | number 0.5–1 | `0.7` | Probability an answer needs before it is applied. |
+| `routing.identifiedOnlyInboxes` | array of positive safe integer inbox ids | unset | Instance-wide Chatwoot inbox ids that require an identified contact, e.g. `[2, 3, 5]` for signed-in-only widgets. An explicit null or empty contact identifier is labeled `spam` and resolved before Jev, without a reply or assignment; this also applies after a customer reopens the ticket. Unset or `[]`: unchanged routing. |
 | `routing.noRequest` | 1–1000 characters | a greeting, a test, contact details alone, or a few words that ask for nothing | Jev's criterion for a ticket with no request yet, which waits for the customer to say more ([How it works](#how-it-works)). |
 | `routing.beforeHandoff` | object | unset | Optional service call completed before the router ends a pending bot turn. |
 | `routing.beforeHandoff.url` | HTTPS URL | required when configured | Endpoint that writes any context needed before handoff. |
@@ -136,6 +142,12 @@ no unpublished shared package needs installing.
 | `routing.kinds.<id>.<name>.cannedResponse` | short code | unset | The account's Chatwoot canned response sent to the customer once, by the account's agent bot (`CHATWOOT_AGENT_BOT_TOKENS`); handoff if it is missing. |
 | `routing.kinds.<id>.<name>.status` | `resolved` or `snoozed` | unset | Set instead of routing the ticket (`snoozed`: until the customer's next message), after the reply of a `cannedResponse`; a new customer message reopens it. |
 | `routing.kinds.<id>.<name>.label` | boolean | `true` | Whether the ticket gets the kind's label; `false` for a kind that is not a kind of ticket, such as a thank-you that is only resolved. |
+
+The identified-only check uses `meta.sender.identifier` from the live conversation the router already fetches.
+Missing or malformed identity data is logged and follows normal routing; a failed conversation fetch keeps the
+existing retry without changing the ticket. The rule does not require a configured spam kind and always adds
+`spam` and resolves, without using any kind's canned response. Enable it only for inboxes whose legitimate
+contacts are always identified; it checks the identifier, not HMAC verification.
 
 ### Secrets
 
