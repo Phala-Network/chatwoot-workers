@@ -93,6 +93,9 @@ const jevResponseSchema = z.object({
   ),
 });
 
+// Contact#push_event_data and the REST contact partial include identifier, null for anonymous contacts (v4.18.0).
+const contactIdentitySchema = z.object({ identifier: z.string().nullable() });
+
 class JevError extends Error {
   constructor(detail: string) {
     super(`TypeSafe Jev: ${detail}`);
@@ -162,6 +165,18 @@ export async function routeConversation(
   };
   const initial = await snapshot();
   if (!initial) return;
+  const isUnidentified = (raw: ChatwootConversation) => {
+    if (!routing.identifiedOnlyInboxes?.includes(raw.inbox_id ?? 0)) return false;
+    // Webhook jobs only retain ids. The live conversation's meta.sender is the same contact data, without
+    // trusting a stale webhook or adding a request. Missing/malformed identity data must not close a ticket.
+    const contact = contactIdentitySchema.safeParse(raw.meta?.sender);
+    if (!contact.success) {
+      log.warn("contact identifier unavailable; routing normally", { accountId, conversationId });
+      return false;
+    }
+    return contact.data.identifier === null || contact.data.identifier === "";
+  };
+  const unidentified = isUnidentified(initial.raw);
   const identities = [initial.conversation.contact.name, initial.conversation.contact.email];
   // The contact's email domain tells a mailing service (a newsletter, a notification) or a reserved test domain
   // (example.com) from a person, on any channel; the address and name stay out, like every identifier.
@@ -201,6 +216,7 @@ export async function routeConversation(
   const fresh = async () => {
     const current = await snapshot(initial.raw.inbox_id);
     if (!current) return;
+    if (isUnidentified(current.raw) !== unidentified) return "defer" as const;
     const latest = await readTurn(chatwoot, store, accountId, conversationId);
     if (latest.boundary !== turn.boundary || inputs(latest.messages).key !== input.key) return "defer" as const;
     return { ...current, handoff: latest.handoff || requiresHandoff(latest.messages) };
@@ -215,21 +231,37 @@ export async function routeConversation(
     }
     return undefined;
   };
-  if (turn.handoff || requiresHandoff(turn.messages) || input.count === 0) return handoff();
+  if (!unidentified && (turn.handoff || requiresHandoff(turn.messages) || input.count === 0)) return handoff();
   const memoKey = `decision:${accountId}:${conversationId}:${input.key}`;
   const memo = decisionSchema.safeParse(parseJson(store.get(memoKey)));
-  let decision = memo.success ? memo.data : undefined;
+  let decision: Decision | undefined = unidentified
+    ? {
+        owner: null,
+        ownerConfidence: 0,
+        topic: null,
+        topicConfidence: 0,
+        kind: "spam",
+        kindConfidence: 1,
+        noRequest: false,
+      }
+    : memo.success
+      ? memo.data
+      : undefined;
   if (!decision) {
     decision = await decide(ctx, owners, routing.kinds?.[String(accountId)], input.text);
     store.set(memoKey, JSON.stringify(decision));
   }
-  const kind = decision.kind && decision.kindConfidence >= routing.minConfidence ? kinds[decision.kind] : undefined;
+  const kind = unidentified
+    ? { status: "resolved" as const, label: true, cannedResponse: undefined }
+    : decision.kind && decision.kindConfidence >= routing.minConfidence
+      ? kinds[decision.kind]
+      : undefined;
   // A kind is actionable even when its text happens to look like a greeting.
   const assignee =
     decision.owner && decision.ownerConfidence >= routing.minConfidence ? owners[decision.owner]?.assignee : undefined;
   let current = await fresh();
   if (current === "defer" || !current) return current;
-  if (current.handoff) return handoff(current);
+  if (!unidentified && current.handoff) return handoff(current);
   // A greeting waits for a request, unless the ticket has an owner to hand it to, or the customer has said nothing
   // for REQUEST_WAIT_SECONDS (the sweep routes the ticket again).
   const lastSaid = Math.max(0, ...turn.messages.filter(isCustomer).map((message) => message.created_at ?? Infinity));
@@ -285,7 +317,7 @@ export async function routeConversation(
   }
   current = await fresh();
   if (current === "defer" || !current) return current;
-  if (current.handoff) return handoff(current);
+  if (!unidentified && current.handoff) return handoff(current);
   if (kind?.status) {
     await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
     await bot.setStatus(accountId, conversationId, { status: kind.status });

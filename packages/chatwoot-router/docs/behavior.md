@@ -24,6 +24,14 @@ may point to another deployment of that API, for example a proxy or gateway.
   history is not scanned. Each status has its own persistent page cursor within the request budget. Failed pages
   retry. An empty page ends that status's pass; the next starts at page 1 and catches
   conversations skipped by changing pages. Neither event payloads nor sweep rows are decision inputs.
+- In `routing.identifiedOnlyInboxes` (instance-wide inbox ids), an explicit null or empty `meta.sender.identifier`
+  in the live conversation bypasses Jev and normal handoff decisions: add `spam`, run the usual before-handoff
+  hook, set `resolved`, and release the bot. Send no reply and assign no owner, regardless of the configured kinds.
+  Preserve other labels and recheck identity before effects; a changed identification decision defers the job.
+  The same rule runs when a customer message reopens a resolved ticket. Missing/malformed identity data logs and
+  routes normally; a failed conversation fetch retains the existing retry without mutations. An absent or empty
+  inbox list leaves behavior unchanged. This checks a contact identifier, not HMAC verification; use only for
+  inboxes whose legitimate contacts always have an identifier.
 - Read messages newest-first, unfiltered (including activities), with `before` paging, at most five pages of 20.
   The latest `conversation_status_changed` activity begins the turn; without one or evidence it is missing, use
   the conversation's start. Take the first three usable customer texts after the boundary, oldest first. Include

@@ -68,6 +68,8 @@ export interface Ticket {
   blocked?: boolean;
   agents?: number[];
   name?: string;
+  /** Includes missing/malformed API data for identity validation tests; null is an anonymous contact. */
+  identifier?: unknown;
   /** The contact's address, and the conversation's channel. */
   email?: string;
   channel?: string;
@@ -128,6 +130,7 @@ export function world(ticket: Ticket = {}, answers: Answers = { owner: ["cloud",
                 assignee_type: ticket.assigneeType,
                 sender: {
                   name: ticket.name ?? "Jane Doe",
+                  identifier: ticket.identifier,
                   email: ticket.email ?? null,
                   blocked: ticket.blocked,
                 },
