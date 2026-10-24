@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { chatwootClient } from "../../../shared/chatwoot/api.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
 import { postQueue, type QueueStore } from "../src/queue.ts";
-import { ALICE, BOB, json, mockFetch, on, type Recorded, testSettings } from "./helpers.ts";
+import { ALICE, json, mockFetch, on, type Recorded, testSettings } from "./helpers.ts";
 
 const CHANNEL = "100000000000000900";
 const ROLE = "100000000000000901";
@@ -12,7 +12,6 @@ const NOW = 1_800_000_000; // seconds
 class MapStore implements QueueStore {
   values = new Map<string, string>();
   threads = new Map<string, string>();
-  waits = new Map<string, number>();
   get(key: string) {
     return this.values.get(key);
   }
@@ -21,8 +20,7 @@ class MapStore implements QueueStore {
   }
   conversation(accountId: number, conversationId: number) {
     const threadId = this.threads.get(`${accountId}:${conversationId}`);
-    const customerWaitingSince = this.waits.get(`${accountId}:${conversationId}`);
-    return { threadId, customerWaitingSince };
+    return threadId ? { threadId } : undefined;
   }
 }
 
@@ -128,45 +126,6 @@ describe("support queue", () => {
     expect(message.content).toContain("🤖");
     expect(message.content).toContain("Unassigned");
     expect(message.allowed_mentions).toEqual({ parse: [], users: [], roles: [] });
-  });
-
-  it("uses recorded waits for counts, order, pings and escalation, with unknown and pending fallbacks", async () => {
-    const store = new MapStore();
-    for (const [id, since] of [
-      [1, 0],
-      [2, 0],
-      [3, NOW - 3 * HOUR],
-      [5, 0],
-      [6, NOW - 4 * HOUR],
-      [7, 0],
-      [8, NOW - HOUR / 4],
-    ] as const) {
-      store.waits.set(`3:${id}`, since);
-    }
-    const { requests } = world([
-      { id: 1, waiting: 3, assignee: { id: 42, name: "Alice" } },
-      { id: 2, waiting: 3 },
-      { id: 3, waiting: 1 },
-      { id: 4, waiting: 2, assignee: { id: 43, name: "Bob" } },
-      { id: 5, waiting: 3, snoozed: true, assignee: { id: 42, name: "Alice" } },
-      { id: 6, waiting: 1, snoozed: true },
-      { id: 7, waiting: 5, pending: true },
-      { id: 8, assignee: { id: 42, name: "Alice" } },
-    ]);
-    await postQueue(context(store), NOW * 1000);
-    const [message] = posted(requests);
-    expect(message.content.split("\n")).toEqual([
-      "📋 **Support queue** · 3 waiting · 2 unassigned",
-      `<@&${ROLE}> 🔔 tickets have waited with no assignee: please \`/assign\` one.`,
-      `🔔 [Acme #3](<https://chatwoot.example.com/app/accounts/3/conversations/3>) · ⏳ <t:${NOW - 3 * HOUR}:R> · ❔ Unassigned`,
-      `[Acme #4](<https://chatwoot.example.com/app/accounts/3/conversations/4>) · ⏳ <t:${NOW - 2 * HOUR}:R> · <@${BOB}>`,
-      `[Acme #8](<https://chatwoot.example.com/app/accounts/3/conversations/8>) · ⏳ <t:${NOW - HOUR / 4}:R> · <@${ALICE}>`,
-      "[Acme #2](<https://chatwoot.example.com/app/accounts/3/conversations/2>) · replied · ❔ Unassigned",
-      `🤖 [Acme #7](<https://chatwoot.example.com/app/accounts/3/conversations/7>) · ⏳ <t:${NOW - 5 * HOUR}:R> · ❔ Unassigned`,
-      `💤 [Acme #6](<https://chatwoot.example.com/app/accounts/3/conversations/6>) · ⏳ <t:${NOW - 4 * HOUR}:R> · ❔ Unassigned`,
-    ]);
-    expect(message.allowed_mentions).toEqual({ parse: [], users: [ALICE, BOB], roles: [ROLE] });
-    expect(JSON.parse(store.get("queue:escalations") ?? "{}")).toEqual({ "3:3": { since: NOW - 3 * HOUR, level: 2 } });
   });
 
   it("lists snoozed tickets last, marked, without pinging anyone or escalating", async () => {

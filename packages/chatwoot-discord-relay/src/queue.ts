@@ -5,9 +5,6 @@
 // step, until someone takes it or replies (a new customer message after a reply starts over).
 // Snoozed tickets that match are listed last, marked 💤 (with when they wake, if snoozed until a
 // time), and ping no one. Nothing is posted when the queue is empty.
-// Open and snoozed waits come from processed messages: a public answer clears the wait,
-// and the first customer message after it starts a new one. Unknown waits and pending bot
-// turns use Chatwoot's waiting_since; assignment or handoff alone never starts a recorded wait.
 //
 // The header counts the open tickets waiting for a reply and those with no assignee. A line shows
 // only the ticket's post (or dashboard link), when its customer asked (a Discord timestamp the client
@@ -46,10 +43,7 @@ const ESCALATIONS_KEY = "queue:escalations";
 export interface QueueStore {
   get(key: string): string | undefined;
   set(key: string, value: string): void;
-  conversation(
-    accountId: number,
-    conversationId: number,
-  ): { threadId?: string | undefined; customerWaitingSince?: number | undefined } | undefined;
+  conversation(accountId: number, conversationId: number): { threadId?: string | undefined } | undefined;
 }
 
 export interface QueueContext {
@@ -121,9 +115,7 @@ export async function postQueue(
           const conversationId = conversation.id;
           if (conversationId === undefined || !relaysInbox(account, conversation.inbox_id)) continue;
           const assignee = personAssignee(conversation);
-          const recorded = store.conversation(account.id, conversationId)?.customerWaitingSince;
-          const waitingSince =
-            (status === "pending" ? conversation.waiting_since : (recorded ?? conversation.waiting_since)) ?? 0;
+          const waitingSince = conversation.waiting_since ?? 0;
           if (status !== "pending" && assignee && !waitingSince) continue;
           const snoozed = status === "snoozed";
           let escalate = false;
