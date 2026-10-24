@@ -115,6 +115,8 @@ const MIGRATIONS: string[] = [
    ALTER TABLE conversations ADD COLUMN assignee_wait_since INTEGER;`,
   // 0.47 lets the triage bot take a newer message into the turn it runs, so a call in flight is not tracked.
   `ALTER TABLE conversations DROP COLUMN triage_called_at;`,
+  // The customer's earliest unanswered message, independent of Chatwoot's handoff timer.
+  `ALTER TABLE conversations ADD COLUMN customer_waiting_since INTEGER;`,
 ];
 
 const COUNTER_TTL_MS = 2 * 60 * 60 * 1000;
@@ -124,6 +126,8 @@ const INTERACTION_TTL_MS = 60 * 60 * 1000;
 interface ConversationFields extends PostFields {
   /** Id of the last message handled; unset for an adopted post until its first run. */
   cursor: number;
+  /** Unix seconds since the first unanswered customer message; 0 when answered, unset when unknown. */
+  customerWaitingSince: number;
 }
 
 /** A conversation's row; a field is undefined until it is set. */
@@ -147,6 +151,7 @@ const COLUMNS: ReadonlyArray<readonly [keyof ConversationFields, string]> = [
   ["customerMessageId", "customer_message_id"],
   ["cardNote", "card_note"],
   ["assigneeWaitSince", "assignee_wait_since"],
+  ["customerWaitingSince", "customer_waiting_since"],
 ];
 
 export type { Job } from "../../../shared/store.ts";
@@ -186,6 +191,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
         customer_message_id: string | null;
         card_note: string | null;
         assignee_wait_since: number | null;
+        customer_waiting_since: number | null;
       }>(
         `SELECT ${COLUMNS.map(([, column]) => column).join(", ")} FROM conversations
          WHERE account_id = ? AND conversation_id = ?`,
@@ -212,6 +218,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
       customerMessageId: row.customer_message_id ?? undefined,
       cardNote: row.card_note ?? undefined,
       assigneeWaitSince: row.assignee_wait_since ?? undefined,
+      customerWaitingSince: row.customer_waiting_since ?? undefined,
     };
   }
 
@@ -282,7 +289,7 @@ export class Store extends QueueStore implements RelayStore, Cache {
   }
 
   /**
-   * Keeps only which conversation each post belongs to (the Hub's thread index): drops the records
+   * Keeps the Hub's thread index and customer waits: drops the records
    * relay 0.27 kept here about every conversation, which their objects took over. Run when the Hub
    * starts; nothing is left to drop after the first time.
    */
@@ -291,12 +298,12 @@ export class Store extends QueueStore implements RelayStore, Cache {
       this.sql.exec(`DELETE FROM ${table}`);
     }
     this.sql.exec(
-      `UPDATE conversations SET ${COLUMNS.filter(([field]) => field !== "threadId")
+      `UPDATE conversations SET ${COLUMNS.filter(([field]) => field !== "threadId" && field !== "customerWaitingSince")
         .map(([, column]) => `${column} = NULL`)
         .join(", ")}, fail_message_id = NULL, fail_count = 0
        WHERE cursor IS NOT NULL OR state IS NOT NULL`,
     );
-    this.sql.exec("DELETE FROM conversations WHERE thread_id IS NULL");
+    this.sql.exec("DELETE FROM conversations WHERE thread_id IS NULL AND customer_waiting_since IS NULL");
     this.sql.exec("DELETE FROM cache WHERE key LIKE 'answer:%' OR key LIKE 'card-backfill:%' OR key = 'handover'");
   }
 

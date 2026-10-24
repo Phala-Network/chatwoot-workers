@@ -182,6 +182,23 @@ export async function processConversation(
           log.warn("failed relay notice unavailable", { accountId, conversationId, ...errorFields(noticeError) });
         }
       }
+      const waitingSince = store.conversation(accountId, conversationId)?.customerWaitingSince;
+      let customerWaitingSince = waitingSince;
+      if (relayMessage.answers) {
+        customerWaitingSince = 0;
+      } else if (
+        message.message_type === 0 &&
+        !message.private &&
+        !message.content_attributes?.deleted &&
+        !conversation.contact.blocked &&
+        !waitingSince
+      ) {
+        customerWaitingSince = message.created_at ?? waitingSince;
+      }
+      if (customerWaitingSince !== undefined && customerWaitingSince !== waitingSince) {
+        // Even an empty or refused message can change the wait without covering the card.
+        store.updateConversation(accountId, conversationId, { customerWaitingSince, state: "" });
+      }
       cursor = message.id;
       store.setCursor(accountId, conversationId, cursor);
     }

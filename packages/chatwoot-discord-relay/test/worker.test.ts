@@ -14,12 +14,14 @@ import { Budget } from "../../../shared/budget.ts";
 import { chatwootClient } from "../../../shared/chatwoot/api.ts";
 import { DiscordForum } from "../src/discord/forum.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
+import { Hub } from "../src/hub.ts";
 import worker from "../src/index.ts";
+import { postQueue } from "../src/queue.ts";
 import { minimumBudget } from "../src/relay/limits.ts";
 import { processConversation, relayFor } from "../src/relay/processor.ts";
 import { loadSettings } from "../src/settings.ts";
 import { Store } from "../src/store.ts";
-import { ALICE, BOB, json, mockFetch, on, type Recorded, type Route, TRIAGE } from "./helpers.ts";
+import { ALICE, BOB, json, mockFetch, on, type Recorded, type Route, TRIAGE, testSettings } from "./helpers.ts";
 
 const CALL = `-# <@${TRIAGE}> Triage the customer's latest message.`;
 const HANDLED =
@@ -51,6 +53,7 @@ interface FakeConversation {
     message_type: number;
     content_type?: string;
     private?: boolean;
+    created_at?: number;
     status?: string;
     sender?: Record<string, unknown>;
     content_attributes?: Record<string, unknown>;
@@ -1498,6 +1501,87 @@ describe("worker", () => {
     expect(contents.at(-1)).toBe(HANDLED);
     expect(contents).not.toContain(CALL);
   }, 15000); // 300 messages to page through.
+
+  it("retries a failed wait report and keeps a router-answered handoff out of the queue until the customer writes again", async () => {
+    const id = 82;
+    const channel = "100000000000000900";
+    const cw = "chatwoot.example.com/api/v1/accounts/3";
+    const asked = Math.floor(Date.now() / 1000) - 600;
+    const live = {
+      id,
+      status: "open",
+      inbox_id: 2,
+      waiting_since: asked + 60, // Chatwoot re-armed this after the bot's public reply.
+      custom_attributes: {},
+      meta: { sender: { name: "Jane Doe" }, assignee: { id: 42, name: "Alice" }, assignee_type: "User" },
+    };
+    world = new World([
+      on("GET", `${cw}/conversations/${id}`, () => json(live)),
+      on("GET", `${cw}/conversations`, (request) =>
+        json({ data: { meta: {}, payload: request.url.searchParams.get("status") === "open" ? [live] : [] } }),
+      ),
+      on("GET", "chatwoot.example.com/api/v1/accounts/1/conversations", () =>
+        json({ data: { meta: {}, payload: [] } }),
+      ),
+      on("POST", `discord.com/api/v10/channels/${channel}/messages`, () => json({ id: "queue" })),
+      on(
+        "PUT",
+        /^discord\.com\/api\/v10\/channels\/\d+\/thread-members\/\d+$/,
+        () => new Response(null, { status: 204 }),
+      ),
+    ]);
+    const messages: FakeConversation["messages"] = [
+      { id: 820, content: "Please review my application", message_type: 0, created_at: asked },
+      { id: 821, content: "Thanks for applying", message_type: 1, sender: { type: "agent_bot" } },
+      { id: 822, content: "Routed to the team", message_type: 1, private: true },
+      { id: 823, content: "Assigned to Alice", message_type: 2 },
+    ];
+    world.conversation(id, messages);
+    const reported = vi.spyOn(Hub.prototype, "reportCustomerWait").mockImplementationOnce(() => {
+      throw new Error("Hub temporarily unavailable");
+    });
+
+    await chatwootWebhook(created(id));
+    await drain();
+    expect(reported).toHaveBeenCalledExactlyOnceWith(3, id, 0);
+    expect(await jobDelay(`conversation:3:${id}`)).toBeGreaterThan(0);
+    await makeJobsDue();
+    await drain();
+    expect(reported).toHaveBeenCalledTimes(2);
+    expect(reported).toHaveBeenLastCalledWith(3, id, 0);
+    expect(JSON.stringify(world.cards().at(-1))).not.toContain("⏳ Asked");
+
+    const queue = () =>
+      runInDurableObject(hub(), async (_instance, state) => {
+        const settings = testSettings({ queue: { channelId: channel, escalationUserId: BOB } });
+        const fetch = (request: Request) => globalThis.fetch(request);
+        await postQueue({
+          settings,
+          store: new Store(state.storage.sql),
+          chatwoot: chatwootClient(settings.config.chatwoot.baseUrl, "relay-token", fetch),
+          rest: new DiscordRest("bot", fetch),
+        });
+      });
+    const queuePosts = () => world.sent("POST", new RegExp(`/channels/${channel}/messages$`));
+    await queue();
+    expect(queuePosts()).toEqual([]);
+    await chatwootWebhook(created(id));
+    await drain();
+    expect(reported).toHaveBeenCalledTimes(2); // A status-only run makes no additional RPC.
+
+    const followup = asked + 120;
+    messages.push({ id: 824, content: "One more question", message_type: 0, created_at: followup });
+    await chatwootWebhook(created(id));
+    await drain();
+    expect(reported).toHaveBeenCalledTimes(3);
+    expect(reported).toHaveBeenLastCalledWith(3, id, followup);
+    await queue();
+    expect(queuePosts()).toHaveLength(1);
+    const posted = JSON.parse(queuePosts()[0]?.body ?? "{}");
+    expect(posted.content).toContain(`⏳ <t:${followup}:R>`);
+    expect(posted.allowed_mentions).toEqual({ parse: [], users: [ALICE], roles: [] });
+    expect(JSON.stringify(world.cards().at(-1))).toContain(`⏳ Asked <t:${followup}:R>`);
+  });
 
   it("relays a message a kind's reply answered after routing, without calling the triage bot", async () => {
     const globex = "chatwoot.example.com/api/v1/accounts/1";

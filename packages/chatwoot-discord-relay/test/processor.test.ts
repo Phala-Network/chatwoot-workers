@@ -509,7 +509,7 @@ describe("processConversation", () => {
     const settings = testSettings();
     const { maxAttempts } = settings.config.relay;
     const world = new World();
-    world.messages = [{ id: 1, content: "first", message_type: 1 }];
+    world.messages = [{ id: 1, content: "first", message_type: 0, created_at: now() - 60 }];
     await withStore(async (store) => {
       await sync(store, settings);
       world.messages.push({ id: 2, content: "refused", message_type: 1 });
@@ -523,8 +523,10 @@ describe("processConversation", () => {
       };
       for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
         await expect(processConversation(context(store, settings), 3, 12)).rejects.toThrow(/Discord HTTP 400/);
+        expect(store.conversation(3, 12)?.customerWaitingSince).toBe(world.messages[0]?.created_at);
       }
       expect(await processConversation(context(store, settings), 3, 12)).toBe("done");
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(0);
 
       expect(world.posts().at(-1)?.body.content).toBe(
         "⚠️ Chatwoot message 2 could not be relayed. Check it in Chatwoot.",
@@ -1054,13 +1056,15 @@ describe("agent bot lifecycle", () => {
     { reply: { message_type: 1, content_attributes: { email: { auto_reply: true } } }, answered: false },
   ])("posts the correct triage decision for a later $reply", async ({ reply, answered }) => {
     const world = new World();
+    const asked = now() - 60;
     world.messages = [
-      { id: 1, content: "A customer request", message_type: 0 },
+      { id: 1, content: "A customer request", message_type: 0, created_at: asked },
       { id: 2, content: "A later message", ...reply },
     ];
     await withStore(async (store) => {
       await sync(store, testSettings());
       expect(world.replies().at(-1)).toBe(answered ? HANDLED : CALL);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(answered ? 0 : asked);
     });
   });
 
@@ -1104,15 +1108,116 @@ describe("agent bot lifecycle", () => {
   );
 });
 
+describe("customer waits", () => {
+  it("clears a router-answered handoff, waits from the next customer message, and clears on an agent reply", async () => {
+    const world = new World();
+    const asked = now() - 600;
+    const handoff = asked + 60;
+    world.conversation.waiting_since = handoff;
+    world.conversation.meta = {
+      ...Object(world.conversation.meta),
+      assignee: { id: 42, name: "Alice" },
+      assignee_type: "User",
+    };
+    world.messages = [
+      { id: 1, content: "Please check my application", message_type: 0, created_at: asked },
+      { id: 2, content: "Our team will review it", message_type: 1, sender: { id: 7, type: "agent_bot" } },
+      { id: 3, content: "Routed to the team", message_type: 1, private: true },
+      { id: 4, content: "Assigned to Alice", message_type: 2, created_at: handoff },
+    ];
+    await withStore(async (store) => {
+      const settings = testSettings();
+      await sync(store, settings);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(0);
+      expect(JSON.stringify(world.cards().at(-1))).not.toContain("⏳ Asked");
+
+      const followup = handoff + 60;
+      world.messages.push(
+        { id: 5, content: "Can you check this too?", message_type: 0, created_at: followup },
+        { id: 6, content: "More details", message_type: 0, created_at: followup + 30 },
+        { id: 7, content: "Looking into it", message_type: 1, private: true },
+        { id: 8, content: "We are away", message_type: 3 },
+      );
+      await sync(store, settings);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(followup);
+      expect(JSON.stringify(world.cards().at(-1))).toContain(`⏳ Asked <t:${followup}:R>`);
+
+      // An empty outgoing message is handled without a Discord post, but still answers the wait.
+      world.messages.push({ id: 9, content: "", message_type: 1, sender: { id: 42, type: "user" } });
+      await sync(store, settings);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(0);
+      const edited = world.sent("PATCH", `/messages/${store.conversation(3, 12)?.cardId}`).at(-1);
+      expect(edited?.body).toBeDefined();
+      expect(edited?.body).not.toContain("⏳ Asked");
+    });
+  });
+
+  it.each([
+    { status: "open", recorded: undefined, shown: 100 },
+    { status: "snoozed", recorded: undefined, shown: 100 },
+    { status: "snoozed", recorded: 50, shown: 50 },
+    { status: "snoozed", recorded: 0, shown: 0 },
+    { status: "pending", recorded: 0, shown: 100 },
+    { status: "resolved", recorded: 50, shown: 0 },
+  ])("shows $status cards with recorded wait $recorded as $shown", async ({ status, recorded, shown }) => {
+    const world = new World();
+    world.conversation.status = status;
+    world.conversation.waiting_since = 100;
+    await withStore(async (store) => {
+      store.updateConversation(3, 12, { threadId: "300000000000000001" });
+      store.setCursor(3, 12, 20); // Pre-upgrade/adopted history is not replayed.
+      if (recorded !== undefined) store.updateConversation(3, 12, { customerWaitingSince: recorded });
+      await sync(store, testSettings());
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(recorded);
+      const card = JSON.stringify(world.cards().at(-1));
+      if (shown) expect(card).toContain(`⏳ Asked <t:${shown}:R>`);
+      else expect(card).not.toContain("⏳ Asked");
+    });
+  });
+
+  it.each(["private", "deleted", "blocked"])("does not start a wait for a %s incoming message", async (excluded) => {
+    const world = new World();
+    if (excluded === "blocked") world.conversation.meta = { sender: { name: "Jane Doe", blocked: true } };
+    world.messages = [
+      {
+        id: 1,
+        content: "A request",
+        message_type: 0,
+        created_at: now(),
+        private: excluded === "private",
+        content_attributes: { deleted: excluded === "deleted" },
+      },
+    ];
+    await withStore(async (store) => {
+      await sync(store, testSettings());
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBeUndefined();
+    });
+  });
+
+  it("keeps the conversation's wait when its post is forgotten or adopted", async () => {
+    await withStore(async (store) => {
+      store.updateConversation(3, 12, { customerWaitingSince: 123 });
+      store.adoptThread(3, 12, "300000000000000001");
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(123);
+      store.forgetThread(3, 12);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(123);
+    });
+  });
+});
+
 describe("Hub records", () => {
-  it("keeps only which conversation each post belongs to", async () => {
+  it("keeps the thread index and customer waits across starts, including waits without a post", async () => {
     await withStore(async (store) => {
       store.updateConversation(3, 12, { threadId: "300000000000000001", state: "[]", cardId: "300000000000000009" });
       store.setCursor(3, 12, 120);
       store.savePostedPart(3, 12, 120, 0, "300000000000000002");
       store.updateConversation(3, 13, { threadId: "300000000000000003" });
+      store.updateConversation(3, 12, { customerWaitingSince: 0 });
+      store.updateConversation(3, 15, { customerWaitingSince: 150 });
+      store.updateConversation(3, 16, { customerWaitingSince: 0 });
       store.setCursor(3, 14, 140); // a post forgotten since
       store.set("answer:300000000000000004", "draft");
+      store.keepThreadIndexOnly();
       store.keepThreadIndexOnly();
       expect(store.ticketForThread("300000000000000001")).toEqual({ accountId: 3, conversationId: 12 });
       expect(store.ticketForThread("300000000000000003")).toEqual({ accountId: 3, conversationId: 13 });
@@ -1120,7 +1225,10 @@ describe("Hub records", () => {
         threadId: "300000000000000001",
         cursor: undefined,
         cardId: undefined,
+        customerWaitingSince: 0,
       });
+      expect(store.conversation(3, 15)?.customerWaitingSince).toBe(150);
+      expect(store.conversation(3, 16)?.customerWaitingSince).toBe(0);
       expect(store.conversation(3, 14)).toBeUndefined();
       expect(store.postedParts(3, 12, 120)).toEqual([]);
       expect(store.get("answer:300000000000000004")).toBeUndefined();
