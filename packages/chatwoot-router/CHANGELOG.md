@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-24
+
+### Changed
+
+- Snoozed kinds keep their confident owner and use the same topic-label rules as routed tickets. After the canned
+  reply and before-handoff hook, snooze before assigning so Chatwoot does not mark the customer as waiting for a
+  human. Resolved kinds still set the ticket aside without assigning an owner. Configuration is backward compatible.
+- A snoozed kind with a canned response snoozes only after this routing attempt sends and confirms its reply.
+  When the once-per-ticket guard finds an earlier reply, route to the confident owner or hand off so an unanswered
+  follow-up stays open for people. Snoozed kinds without a canned response and resolved kinds keep their status behavior.
+
 ## [0.11.0] - 2026-10-22
 
 ### Added
@@ -181,7 +192,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.11.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.12.0...HEAD
+[0.12.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.11.0...chatwoot-router@0.12.0
 [0.11.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.10.0...chatwoot-router@0.11.0
 [0.10.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.9.0...chatwoot-router@0.10.0
 [0.9.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.8.0...chatwoot-router@0.9.0

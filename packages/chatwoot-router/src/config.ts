@@ -79,9 +79,11 @@ export const configSchema = z
                */
               cannedResponse: z.string().trim().min(1).max(255).optional(),
               /**
-               * Set instead of routing the ticket (after the reply, with cannedResponse): `resolved`,
-               * or `snoozed` until the customer's next message. A new message from the customer
-               * reopens either.
+               * Set after the reply, with cannedResponse: `resolved` sets the ticket aside without
+               * assigning an owner. `snoozed` waits for the customer and still assigns the confident
+               * owner. With cannedResponse, snooze only when this attempt sends and confirms the reply;
+               * otherwise route normally. Without cannedResponse, snooze as configured. A new message
+               * from the customer reopens either status.
                */
               status: z.enum(["resolved", "snoozed"]).optional(),
               /**
