@@ -14,7 +14,7 @@ import { Budget } from "../../../shared/budget.ts";
 import { chatwootClient } from "../../../shared/chatwoot/api.ts";
 import { DiscordForum } from "../src/discord/forum.ts";
 import { DiscordRest } from "../src/discord/rest.ts";
-import { Hub } from "../src/hub.ts";
+import * as hubServices from "../src/hub.ts";
 import worker from "../src/index.ts";
 import { postQueue } from "../src/queue.ts";
 import { minimumBudget } from "../src/relay/limits.ts";
@@ -1537,9 +1537,23 @@ describe("worker", () => {
       { id: 823, content: "Assigned to Alice", message_type: 2 },
     ];
     world.conversation(id, messages);
-    const reported = vi.spyOn(Hub.prototype, "reportCustomerWait").mockImplementationOnce(() => {
-      throw new Error("Hub temporarily unavailable");
-    });
+    // Fail the caller's transport once: throwing inside the Hub makes workerd log an RPC exception.
+    const realHub = hubServices.hub;
+    type ReportWait = ReturnType<typeof realHub>["reportCustomerWait"];
+    const reported = vi.fn<(...args: Parameters<ReportWait>) => void>();
+    vi.spyOn(hubServices, "hub").mockImplementation(
+      (bindings) =>
+        new Proxy(realHub(bindings), {
+          get(target, key) {
+            if (key !== "reportCustomerWait") return Reflect.get(target, key, target);
+            return async (...args: Parameters<ReportWait>) => {
+              reported(...args);
+              if (reported.mock.calls.length === 1) throw new Error("Hub temporarily unavailable");
+              await target.reportCustomerWait(...args);
+            };
+          },
+        }),
+    );
 
     await chatwootWebhook(created(id));
     await drain();
@@ -1551,19 +1565,8 @@ describe("worker", () => {
     expect(reported).toHaveBeenLastCalledWith(3, id, 0);
     expect(JSON.stringify(world.cards().at(-1))).not.toContain("⏳ Asked");
 
-    const queue = () =>
-      runInDurableObject(hub(), async (_instance, state) => {
-        const settings = testSettings({ queue: { channelId: channel, escalationUserId: BOB } });
-        const fetch = (request: Request) => globalThis.fetch(request);
-        await postQueue({
-          settings,
-          store: new Store(state.storage.sql),
-          chatwoot: chatwootClient(settings.config.chatwoot.baseUrl, "relay-token", fetch),
-          rest: new DiscordRest("bot", fetch),
-        });
-      });
     const queuePosts = () => world.sent("POST", new RegExp(`/channels/${channel}/messages$`));
-    await queue();
+    await supportQueue(channel);
     expect(queuePosts()).toEqual([]);
     await chatwootWebhook(created(id));
     await drain();
@@ -1575,12 +1578,68 @@ describe("worker", () => {
     await drain();
     expect(reported).toHaveBeenCalledTimes(3);
     expect(reported).toHaveBeenLastCalledWith(3, id, followup);
-    await queue();
+    await supportQueue(channel);
     expect(queuePosts()).toHaveLength(1);
     const posted = JSON.parse(queuePosts()[0]?.body ?? "{}");
     expect(posted.content).toContain(`⏳ <t:${followup}:R>`);
     expect(posted.allowed_mentions).toEqual({ parse: [], users: [ALICE], roles: [] });
     expect(JSON.stringify(world.cards().at(-1))).toContain(`⏳ Asked <t:${followup}:R>`);
+  });
+
+  it("ends a wait on resolve without a reply and starts a fresh queue escalation after reopening", async () => {
+    const id = 83;
+    const channel = "100000000000000900";
+    const cw = "chatwoot.example.com/api/v1/accounts/3";
+    const reopened = Math.floor(Date.now() / 1000) - 30;
+    const asked = reopened - 14 * 24 * 3600;
+    const live = { id, status: "open", inbox_id: 2, waiting_since: asked, custom_attributes: {} };
+    world = new World([
+      on("GET", `${cw}/conversations/${id}`, () => json(live)),
+      on("GET", `${cw}/conversations`, (request) =>
+        json({ data: { meta: {}, payload: request.url.searchParams.get("status") === live.status ? [live] : [] } }),
+      ),
+      on("GET", "chatwoot.example.com/api/v1/accounts/1/conversations", () =>
+        json({ data: { meta: {}, payload: [] } }),
+      ),
+      on("POST", `discord.com/api/v10/channels/${channel}/messages`, () => json({ id: "queue" })),
+    ]);
+    const messages: FakeConversation["messages"] = [
+      { id: 830, content: "An old question", message_type: 0, created_at: asked },
+    ];
+    world.conversation(id, messages);
+    await chatwootWebhook(created(id));
+    await drain();
+    await supportQueue(channel);
+    const queuePosts = () =>
+      world.sent("POST", new RegExp(`/channels/${channel}/messages$`)).map((request) => JSON.parse(request.body));
+    expect(queuePosts()[0].allowed_mentions.users).toEqual([BOB]);
+
+    live.status = "resolved";
+    live.waiting_since = 0;
+    await chatwootWebhook({ event: "conversation_status_changed", id, account: { id: 3 } });
+    await drain();
+    expect(
+      await runInDurableObject(
+        hub(),
+        (_instance, state) => new Store(state.storage.sql).conversation(3, id)?.customerWaitingSince,
+      ),
+    ).toBe(0);
+
+    live.status = "open";
+    live.waiting_since = reopened;
+    messages.push({ id: 831, content: "A new question", message_type: 0, created_at: reopened });
+    await chatwootWebhook(created(id));
+    await drain();
+    await supportQueue(channel);
+    const latest = queuePosts().at(-1);
+    expect(latest.content).toContain(`⏳ <t:${reopened}:R>`);
+    expect(latest.allowed_mentions).toEqual({ parse: [], users: [], roles: [] });
+    expect(JSON.stringify(world.cards().at(-1))).toContain(`⏳ Asked <t:${reopened}:R>`);
+    expect(
+      await runInDurableObject(hub(), (_instance, state) =>
+        JSON.parse(new Store(state.storage.sql).get("queue:escalations") ?? "{}"),
+      ),
+    ).toEqual({ [`3:${id}`]: { since: reopened, level: 0 } });
   });
 
   it("relays a message a kind's reply answered after routing, without calling the triage bot", async () => {
@@ -1683,6 +1742,19 @@ async function sweep(): Promise<void> {
   );
   await waitOnExecutionContext(ctx);
   await drain();
+}
+
+async function supportQueue(channelId: string): Promise<void> {
+  await runInDurableObject(hub(), async (_instance, state) => {
+    const settings = testSettings({ queue: { channelId, escalationUserId: BOB } });
+    const fetch = (request: Request) => globalThis.fetch(request);
+    await postQueue({
+      settings,
+      store: new Store(state.storage.sql),
+      chatwoot: chatwootClient(settings.config.chatwoot.baseUrl, "relay-token", fetch),
+      rest: new DiscordRest("bot", fetch),
+    });
+  });
 }
 
 /** How long until a queued job is due. */

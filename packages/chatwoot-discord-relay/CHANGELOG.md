@@ -17,8 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handing off a ticket after the router's canned reply no longer makes it appear unanswered,
   ping its assignee hourly, or escalate it as waiting. Snoozed tickets use the same wait;
   pending bot turns keep Chatwoot's `waiting_since`.
+- A conversation observed resolved clears its wait even without a public reply, so a customer
+  message after reopening starts a fresh wait and escalation period. Remaining window: if resolve
+  and reopen both occur before a relay run observes resolved, the old wait can remain. Chatwoot
+  v4.18.0's `ActivityMessageHandler#status_change_activity` creates structured status activities
+  through an asynchronous `ActivityMessageJob` and may omit them when content is blank; they
+  are not a reliable ordered history of status changes, so the relay does not infer a reset from them.
 - Transition: tickets active before upgrading fall back to Chatwoot's value until their next
-  customer message or answering reply. An escalation may repeat once when a ticket's wait start changes.
+  customer message or answering reply, or an observed resolution. An escalation may repeat once
+  when a ticket's wait start changes.
 
 ## [0.52.0] - 2026-10-13
 

@@ -49,6 +49,8 @@ class World {
   };
   messages: FakeMessage[] = [];
   bot: { id: number; account_id: number } | null = null;
+  /** Status changes observed by successive conversation reads. */
+  readStatuses: string[] = [];
   failLinks = 0;
   /** Assignee announcements Discord fails before accepting them. */
   failAnnouncements = 0;
@@ -66,7 +68,11 @@ class World {
   constructor() {
     const base = "chatwoot.example.com/api/v1/accounts/3";
     this.requests = mockFetch(
-      on("GET", `${base}/conversations/12`, () => json(this.conversation)),
+      on("GET", `${base}/conversations/12`, () => {
+        const status = this.readStatuses.shift();
+        if (status !== undefined) this.conversation.status = status;
+        return json(this.conversation);
+      }),
       on("GET", `${base}/conversations/12/messages`, (request) => {
         const after = request.url.searchParams.get("after");
         const before = request.url.searchParams.get("before");
@@ -1109,6 +1115,41 @@ describe("agent bot lifecycle", () => {
 });
 
 describe("customer waits", () => {
+  it.each(["initial", "fresh"])("ends a wait when the %s conversation read observes resolved", async (read) => {
+    const world = new World();
+    const reopened = now() - 30;
+    const asked = reopened - 14 * 24 * 3600;
+    world.messages = [{ id: 1, content: "An old question", message_type: 0, created_at: asked }];
+    await withStore(async (store) => {
+      const settings = testSettings();
+      await sync(store, settings);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(asked);
+      if (read === "initial") {
+        world.conversation.status = "resolved";
+      } else {
+        world.readStatuses = ["open", "resolved"];
+        world.messages.push({ id: 2, content: "Queued before resolution", message_type: 0, created_at: asked + 60 });
+      }
+      await sync(store, settings);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(0);
+
+      world.conversation.status = "open";
+      world.conversation.waiting_since = reopened;
+      world.messages.push(
+        { id: 3, content: "A new question", message_type: 0, created_at: reopened },
+        {
+          id: 4,
+          content: "Delayed resolution activity",
+          message_type: 2,
+          content_attributes: { activity: { type: "conversation_status_changed", status: "resolved" } },
+        },
+      );
+      await sync(store, settings);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(reopened);
+      expect(JSON.stringify(world.cards().at(-1))).toContain(`⏳ Asked <t:${reopened}:R>`);
+    });
+  });
+
   it("clears a router-answered handoff, waits from the next customer message, and clears on an agent reply", async () => {
     const world = new World();
     const asked = now() - 600;
@@ -1168,7 +1209,7 @@ describe("customer waits", () => {
       store.setCursor(3, 12, 20); // Pre-upgrade/adopted history is not replayed.
       if (recorded !== undefined) store.updateConversation(3, 12, { customerWaitingSince: recorded });
       await sync(store, testSettings());
-      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(recorded);
+      expect(store.conversation(3, 12)?.customerWaitingSince).toBe(status === "resolved" ? 0 : recorded);
       const card = JSON.stringify(world.cards().at(-1));
       if (shown) expect(card).toContain(`⏳ Asked <t:${shown}:R>`);
       else expect(card).not.toContain("⏳ Asked");

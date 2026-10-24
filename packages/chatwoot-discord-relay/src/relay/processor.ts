@@ -91,6 +91,7 @@ export async function processConversation(
   }
   if (!relaysInbox(account, raw.inbox_id)) return "done";
   let conversation = toRelayConversation(conversationId, raw);
+  clearResolvedWait(store, accountId, conversation);
   const known = store.conversation(accountId, conversationId)?.threadId;
   if (known) await context.claimThread(accountId, conversationId, known);
   else await recoverThread(context, accountId, account.forumChannelId, conversation);
@@ -136,6 +137,7 @@ export async function processConversation(
         if (!fresh) return "done";
         if (!relaysInbox(account, fresh.inbox_id)) return "done";
         conversation = toRelayConversation(conversationId, fresh);
+        clearResolvedWait(store, accountId, conversation);
         if (
           fresh.status === "pending" &&
           fresh.inbox_id !== undefined &&
@@ -184,7 +186,7 @@ export async function processConversation(
       }
       const waitingSince = store.conversation(accountId, conversationId)?.customerWaitingSince;
       let customerWaitingSince = waitingSince;
-      if (relayMessage.answers) {
+      if (conversation.status === "resolved" || relayMessage.answers) {
         customerWaitingSince = 0;
       } else if (
         message.message_type === 0 &&
@@ -216,6 +218,16 @@ export async function processConversation(
     if (call) await relay.callTriage(accountId, conversation);
   }
   return "done";
+}
+
+/** Resolving ends the current wait even when no public reply was sent. */
+function clearResolvedWait(store: Store, accountId: number, conversation: RelayConversation): void {
+  if (
+    conversation.status === "resolved" &&
+    store.conversation(accountId, conversation.id)?.customerWaitingSince !== 0
+  ) {
+    store.updateConversation(accountId, conversation.id, { customerWaitingSince: 0, state: "" });
+  }
 }
 
 /**

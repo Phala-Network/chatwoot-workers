@@ -428,10 +428,22 @@ For open and snoozed tickets, the queue and the card's **⏳ Asked** use the fir
 message since the last public answering reply. A public reply from an agent or bot clears the wait;
 private notes, activity lines, templates (greetings and out-of-office notices), deleted messages,
 failed replies, and automatic email replies do not answer it. Messages from blocked contacts do not
-start a wait. Assignment and bot handoff do not restart it. Resolved cards show no **⏳ Asked**.
-Until the relay records a customer message or answering reply, including for tickets active before
-upgrading, it falls back to Chatwoot's `waiting_since`. Pending tickets always use Chatwoot's value
-because their customer messages may still be held for the inbox bot. An escalation may repeat once
+start a wait. Assignment and bot handoff do not restart it. Whenever a conversation read observes
+it resolved, the relay clears the wait even if nobody sent a public reply. Resolved tickets are
+not waiting and their cards show no **⏳ Asked**; the next customer message starts a new wait.
+
+If a ticket is resolved and reopened before any relay run observes the resolved state, its old
+wait can remain. Chatwoot v4.18.0's structured status activity is created by an asynchronous job
+([`ActivityMessageHandler`](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/models/concerns/activity_message_handler.rb#L50-L70),
+[`ActivityMessageJob`](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/jobs/conversations/activity_message_job.rb#L4-L5))
+and may be absent when no activity content is generated. Its message order can therefore differ
+from the actual status changes. The relay does not use that activity or parse its text to infer
+an unobserved resolution: a late activity could incorrectly clear a new customer wait.
+
+Until the relay records a customer message or answering reply, or observes the ticket resolved,
+including for tickets active before upgrading, it falls back to Chatwoot's `waiting_since`.
+Pending tickets always use Chatwoot's value because their customer messages may still be held
+for the inbox bot. An escalation may repeat once
 when a ticket's wait start changes from the fallback to the recorded message time.
 
 Nothing is posted when there is no such ticket. A line holds no customer text, and mentions are
