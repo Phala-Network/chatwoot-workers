@@ -199,7 +199,7 @@ const ASSIGNMENT_LINE_WAIT_MS = 2 * 60 * 1000;
 const EARLIER_TICKETS = 5;
 
 /** A stored state that matches no conversation: the post's archived flag must be applied again. */
-const OUT_OF_DATE = "";
+export const OUT_OF_DATE = "";
 const UNKNOWN_CARDS = "?";
 /** Discord's epoch (ms since the Unix epoch), and how far its clock may be from the Worker's. */
 const DISCORD_EPOCH = 1420070400000n;
