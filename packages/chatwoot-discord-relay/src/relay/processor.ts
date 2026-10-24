@@ -20,7 +20,7 @@ import { fetchAvatarUrl } from "../discord/users.ts";
 import type { Store } from "../store.ts";
 import { mentionedUserIds } from "./format.ts";
 import { FINISH_REQUESTS, PAGE_REQUESTS, requestsPerMessage } from "./limits.ts";
-import { type ForumClient, Relay, type RelayOptions, type RelayStore } from "./relay.ts";
+import { type ForumClient, OUT_OF_DATE, Relay, type RelayOptions, type RelayStore } from "./relay.ts";
 import { relayDerived } from "./updates.ts";
 
 const INBOX_CACHE_MS = 24 * 60 * 60 * 1000;
@@ -91,6 +91,7 @@ export async function processConversation(
   }
   if (!relaysInbox(account, raw.inbox_id)) return "done";
   let conversation = toRelayConversation(conversationId, raw);
+  updateWait(store, accountId, conversation);
   const known = store.conversation(accountId, conversationId)?.threadId;
   if (known) await context.claimThread(accountId, conversationId, known);
   else await recoverThread(context, accountId, account.forumChannelId, conversation);
@@ -125,17 +126,18 @@ export async function processConversation(
       if (inboxName === undefined && !store.conversation(accountId, conversationId)?.threadId) {
         inboxName = await cachedInboxName(context, accountId, raw);
       }
-      if (
+      const fromCustomer =
         message.message_type === 0 &&
         !message.private &&
         !message.content_attributes?.deleted &&
-        !conversation.contact.blocked
-      ) {
+        !conversation.contact.blocked;
+      if (fromCustomer) {
         // A customer message: read the conversation again, which may have been handed to people since.
         const fresh = await chatwoot.getConversation(accountId, conversationId);
         if (!fresh) return "done";
         if (!relaysInbox(account, fresh.inbox_id)) return "done";
         conversation = toRelayConversation(conversationId, fresh);
+        updateWait(store, accountId, conversation);
         if (
           fresh.status === "pending" &&
           fresh.inbox_id !== undefined &&
@@ -182,6 +184,7 @@ export async function processConversation(
           log.warn("failed relay notice unavailable", { accountId, conversationId, ...errorFields(noticeError) });
         }
       }
+      updateWait(store, accountId, conversation, relayMessage.answers, fromCustomer ? message.created_at : undefined);
       cursor = message.id;
       store.setCursor(accountId, conversationId, cursor);
     }
@@ -199,6 +202,27 @@ export async function processConversation(
     if (call) await relay.callTriage(accountId, conversation);
   }
   return "done";
+}
+
+/**
+ * Records the customer's wait, in message order: a public answer or a resolved conversation ends it, and a customer
+ * message (sent at `customerAt`) starts one unless one runs. Chatwoot's waiting_since also starts when a bot hands
+ * the conversation to people, which is no wait. A change marks the card out of date, even for a message posting nothing.
+ */
+function updateWait(
+  store: Store,
+  accountId: number,
+  conversation: RelayConversation,
+  answered = false,
+  customerAt?: number | null,
+): void {
+  const recorded = store.conversation(accountId, conversation.id)?.customerWaitingSince;
+  let since = recorded;
+  if (conversation.status === "resolved" || answered) since = 0;
+  else if (customerAt && !recorded) since = customerAt;
+  if (since !== undefined && since !== recorded) {
+    store.updateConversation(accountId, conversation.id, { customerWaitingSince: since, state: OUT_OF_DATE });
+  }
 }
 
 /**

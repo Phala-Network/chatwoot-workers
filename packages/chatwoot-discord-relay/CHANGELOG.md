@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-10-24
+
+### Fixed
+
+- The support queue and ticket card's **⏳ Asked** derive customer waits from processed messages.
+  A public answering reply from an agent or bot clears the wait; the first customer message after
+  it starts a new one. Private notes, activity and templates leave it unchanged. Assigning or
+  handing off a ticket after the router's canned reply no longer makes it appear unanswered,
+  ping its assignee hourly, or escalate it as waiting. Snoozed tickets use the same wait;
+  pending bot turns keep Chatwoot's `waiting_since`.
+- A conversation observed resolved clears its wait even without a public reply, so a customer
+  message after reopening starts a fresh wait and escalation period. Remaining window: if resolve
+  and reopen both occur before a relay run observes resolved, the old wait can remain. Chatwoot
+  v4.18.0's `ActivityMessageHandler#status_change_activity` creates structured status activities
+  through an asynchronous `ActivityMessageJob` and may omit them when content is blank; they
+  are not a reliable ordered history of status changes, so the relay does not infer a reset from them.
+- Transition: tickets active before upgrading fall back to Chatwoot's value until their next
+  customer message or answering reply, or an observed resolution. An escalation may repeat once
+  when a ticket's wait start changes.
+
 ## [0.52.0] - 2026-10-13
 
 ### Added
@@ -983,7 +1003,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.52.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.53.0...HEAD
+[0.53.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.52.0...chatwoot-discord-relay@0.53.0
 [0.52.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.51.0...chatwoot-discord-relay@0.52.0
 [0.51.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.50.0...chatwoot-discord-relay@0.51.0
 [0.50.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.49.1...chatwoot-discord-relay@0.50.0
