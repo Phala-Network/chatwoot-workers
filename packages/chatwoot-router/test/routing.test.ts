@@ -412,6 +412,69 @@ describe("native bot turns", () => {
     ]);
   });
 
+  it.each(["brand bot", "existing owner", "unclear owner"])(
+    "routes an unanswered follow-up with a %s instead of snoozing for a historical reply",
+    async (owner) => {
+      const mock = world(
+        {
+          ...(owner === "existing owner" ? { assigneeType: "User", assignee: { id: 7 } } : {}),
+          messages: [
+            { id: 1, message_type: 1, private: false, sender: { type: "agent_bot", id: 1 } },
+            activity(2, "resolved"),
+            incoming(3, "Following up on that disclosure"),
+          ],
+        },
+        { owner: [owner === "unclear owner" ? "unclear" : "cloud", 1], kind: ["startup", 1] },
+      );
+      const ctx = context(new MemoryStore(), withHook(snoozedKinds), { BEFORE_HANDOFF_SECRET });
+      await routeConversation(ctx, 1, 5);
+      expect(mock.ticket.status).toBe("open");
+      expect(mock.ticket.assignee?.id ?? null).toBe(owner === "brand bot" ? 6 : owner === "existing owner" ? 7 : null);
+      expect(sent(mock.requests, "POST", `${CW}/messages`)).toEqual([]);
+      expect(sent(mock.requests, "POST", BEFORE_HANDOFF)).toHaveLength(1);
+      expect(sent(mock.requests, "POST", `${CW}/toggle_status`).map((request) => JSON.parse(request.body))).toEqual(
+        owner === "brand bot" ? [] : [{ status: "open" }],
+      );
+      expect(sent(mock.requests, "POST", `${CW}/assignments`).map((request) => JSON.parse(request.body))).toEqual(
+        owner === "brand bot" ? [{ assignee_id: 6, assignee_type: "User" }] : [],
+      );
+      expect(ctx.store.get("reply:1:5")).toBe("observed");
+    },
+  );
+
+  it("still snoozes kinds without a canned response", async () => {
+    const mock = world({}, { owner: ["cloud", 1], kind: ["newsletter", 1] });
+    const ctx = context(new MemoryStore(), KINDS);
+    await routeConversation(ctx, 1, 5);
+    expect(mock.ticket.status).toBe("snoozed");
+    expect(mock.ticket.assignee?.id).toBe(6);
+    expect(mock.ticket.labels).toEqual(["billing", "newsletter"]);
+    expect(sent(mock.requests, "POST", `${CW}/messages`)).toEqual([]);
+    expect(sent(mock.requests, "POST", `${CW}/toggle_status`).map((request) => JSON.parse(request.body))).toEqual([
+      { status: "snoozed" },
+    ]);
+  });
+
+  it("routes normally on retry when a confirmed reply was sent before a failed final read", async () => {
+    const mock = world(
+      {
+        during: (operation) => {
+          if (operation === "messages") mock.ticket.fail = { read: 1 };
+        },
+      },
+      { owner: ["cloud", 1], kind: ["startup", 1] },
+    );
+    const ctx = context(new MemoryStore(), withHook(snoozedKinds), { BEFORE_HANDOFF_SECRET });
+    await expect(routeConversation(ctx, 1, 5)).rejects.toThrow("503");
+    expect(mock.ticket.status).toBe("pending");
+    await routeConversation(ctx, 1, 5);
+    expect(mock.ticket.status).toBe("open");
+    expect(mock.ticket.assignee?.id).toBe(6);
+    expect(sent(mock.requests, "POST", `${CW}/messages`)).toHaveLength(1);
+    expect(sent(mock.requests, "POST", BEFORE_HANDOFF)).toHaveLength(1);
+    expect(sent(mock.requests, "POST", `${CW}/toggle_status`)).toEqual([]);
+  });
+
   it.each(["fail", "lose"] as const)(
     "uses non-pending release on retry after an assignment %s following snooze",
     async (failure) => {

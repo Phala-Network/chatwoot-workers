@@ -69,6 +69,11 @@ may point to another deployment of that API, for example a proxy or gateway.
   then end the turn: a resolved kind is set aside without assigning an owner; a snoozed kind waits for the customer
   and still gets the confident owner. Snoozed kinds use the same topic-label rules as routed tickets; resolved
   kinds do not get a topic. Other tickets get a confident owner or explicit bot `status=open` handoff.
+  A snoozed kind with `cannedResponse` snoozes only after the current routing attempt sends and confirms its reply.
+  An earlier reply found in history prevents another send but does not answer the new turn: route to the confident
+  owner or hand off instead, leaving the ticket open and waiting for people. A retry that only finds history also
+  routes normally. Without `cannedResponse`, a snoozed kind still snoozes as configured; resolved kinds still set
+  the ticket aside with or without a new reply.
   After the reply and optional before-handoff hook, set `snoozed` before assigning: bot snooze does not call
   `bot_handoff!`, and assignment of a non-pending ticket neither opens it nor re-arms `waiting_since`.
   Assignment clears `ai_assignee` and creates no status activity when the status stays snoozed. Recheck ownership,
@@ -88,7 +93,8 @@ may point to another deployment of that API, for example a proxy or gateway.
   first attempt; an incomplete/failed/ambiguous read or an existing attempt without a visible reply hands off.
   Record the attempt **before sending**. A failed POST, lost response, malformed receipt or failed/deleted reply
   persists handoff and never resolves/snoozes or resends. Only a valid creation receipt for this conversation or
-  confirmed history permits the kind's ending status. This confirms creation in Chatwoot, not channel delivery;
+  confirmed history permits continuing a kind with a canned response; snoozing still requires this attempt's new
+  reply as above. This confirms creation in Chatwoot, not channel delivery;
   a delivery failure seen in the final fresh read also hands off. Labels, assignment and status use
   current Chatwoot state, without an effects ledger or custom coordination attributes. A missing canned response
   hands off immediately. If assignment fails after snoozing, the existing non-pending retry releases the bot and

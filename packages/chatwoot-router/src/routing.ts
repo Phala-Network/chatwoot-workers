@@ -288,6 +288,7 @@ export async function routeConversation(
   ];
   if (labels.length !== current.conversation.labels.length) await bot.setLabels(accountId, conversationId, labels);
   const replyKey = `reply:${accountId}:${conversationId}`;
+  let repliedThisTurn = false;
   if (kind?.cannedResponse) {
     let history: Awaited<ReturnType<typeof replyHistory>>;
     try {
@@ -309,12 +310,16 @@ export async function routeConversation(
       try {
         const message = await bot.createMessage(accountId, conversationId, { content, private: false, files: [] });
         if (!confirmedReply(message, botId) || message?.conversation_id !== conversationId) return handoff();
+        repliedThisTurn = true;
       } catch (error) {
         log.warn("reply creation unconfirmed; handing off", { accountId, conversationId, ...errorFields(error) });
         return handoff();
       }
     }
   }
+  // A kind with a canned reply waits for the customer only after sending and confirming that reply here.
+  // History alone cannot justify snoozing; kinds without a canned response keep their configured status.
+  const status = kind?.status === "snoozed" && kind.cannedResponse && !repliedThisTurn ? undefined : kind?.status;
   if (assignee !== undefined) {
     // AssignmentService silently assigns nobody for a user outside this account.
     const agents = await chatwoot.listAgents(accountId);
@@ -323,10 +328,10 @@ export async function routeConversation(
   current = await fresh();
   if (current === "defer" || !current) return current;
   if (!unidentified && current.handoff) return handoff(current);
-  if (kind?.status) {
+  if (status) {
     await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
-    await bot.setStatus(accountId, conversationId, { status: kind.status });
-    expectActivity(store, accountId, conversationId, { status: kind.status });
+    await bot.setStatus(accountId, conversationId, { status });
+    expectActivity(store, accountId, conversationId, { status });
     // Status keeps ai_assignee. Without an owner, finish by releasing it without another activity.
     if (assignee === undefined || !owns(current.raw)) {
       await release();
@@ -338,14 +343,14 @@ export async function routeConversation(
     // Bot toggle_status calls bot_handoff! only for pending -> open:
     // https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/controllers/api/v1/accounts/conversations_controller.rb#L83-L100
     const latest = await chatwoot.getConversation(accountId, conversationId);
-    if (latest?.status !== kind.status || latest.inbox_id !== initial.raw.inbox_id || !owns(latest)) return "defer";
+    if (latest?.status !== status || latest.inbox_id !== initial.raw.inbox_id || !owns(latest)) return "defer";
   } else if (assignee !== undefined && current.raw.meta?.assignee_type === "AgentBot") {
     await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
   } else {
     return handoff(current);
   }
   await bot.assign(accountId, conversationId, assignee);
-  if (!kind?.status) expectActivity(store, accountId, conversationId, { status: "open" });
+  if (!status) expectActivity(store, accountId, conversationId, { status: "open" });
   // Assignment itself ends a bot-assigned turn. No reply or status action may follow it.
   return undefined;
 }
