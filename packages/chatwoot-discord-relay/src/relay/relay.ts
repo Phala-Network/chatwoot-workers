@@ -127,9 +127,7 @@ export interface RelayStore {
   conversation(
     accountId: number,
     conversationId: number,
-  ):
-    | ({ [Field in keyof PostFields]: PostFields[Field] | undefined } & { customerWaitingSince?: number | undefined })
-    | undefined;
+  ): { [Field in keyof PostFields]: PostFields[Field] | undefined } | undefined;
   /** Records the given fields. */
   updateConversation(accountId: number, conversationId: number, patch: Partial<PostFields>): void;
   /** Ids of the Discord messages posted so far for a Chatwoot message, in order. */
@@ -199,7 +197,7 @@ const ASSIGNMENT_LINE_WAIT_MS = 2 * 60 * 1000;
 const EARLIER_TICKETS = 5;
 
 /** A stored state that matches no conversation: the post's archived flag must be applied again. */
-export const OUT_OF_DATE = "";
+const OUT_OF_DATE = "";
 const UNKNOWN_CARDS = "?";
 /** Discord's epoch (ms since the Unix epoch), and how far its clock may be from the Worker's. */
 const DISCORD_EPOCH = 1420070400000n;
@@ -807,11 +805,6 @@ export class Relay {
   private cardTicket(accountId: number, conversation: RelayConversation): CardTicket {
     const { assignee } = conversation;
     const channel = channelName(conversation);
-    const recorded = this.options.store.conversation(accountId, conversation.id);
-    const waitingSince =
-      conversation.status === "open" || conversation.status === "snoozed"
-        ? (recorded?.customerWaitingSince ?? conversation.waitingSince)
-        : conversation.waitingSince;
     return {
       title: `${this.options.target(accountId).name} #${conversation.id}`,
       customer: contactName(conversation.contact),
@@ -820,9 +813,9 @@ export class Relay {
       status: conversation.status ?? "open",
       assignee: assignee ? (assignee.name ?? `#${assignee.id ?? "?"}`) : null,
       labels: conversation.labels,
-      waitingSince: conversation.status === "resolved" ? null : (waitingSince ?? null),
+      waitingSince: conversation.status === "resolved" ? null : (conversation.waitingSince ?? null),
       snoozedUntil: conversation.snoozedUntil ?? null,
-      note: recorded?.cardNote || null,
+      note: this.options.store.conversation(accountId, conversation.id)?.cardNote || null,
     };
   }
 

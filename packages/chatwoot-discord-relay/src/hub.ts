@@ -1,7 +1,6 @@
 // The one Durable Object shared by every conversation. It knows which conversation each post
-// belongs to (commands are given in a post), keeps customer waits for the support queue,
-// counts the triage bot's hourly budget, and runs the installation-wide background work:
-// the reconciliation sweep, hourly support queue, and guild commands.
+// belongs to (commands are given in a post), counts the triage bot's hourly budget, and runs the
+// installation-wide background work: the reconciliation sweep, hourly support queue, and guild commands.
 // Requests from conversations only read or write its storage, so none of them waits for that
 // background work.
 
@@ -69,11 +68,6 @@ export class Hub extends DurableObject<Env> {
       this.store.updateConversation(accountId, conversationId, { threadId });
       return true;
     });
-  }
-
-  /** Records the customer wait derived by the conversation's message processor. */
-  reportCustomerWait(accountId: number, conversationId: number, customerWaitingSince: number): void {
-    this.store.updateConversation(accountId, conversationId, { customerWaitingSince });
   }
 
   /** Forgets that `threadId` is the conversation's post (its conversation was deleted). */

@@ -74,9 +74,8 @@ Cron (every 5 min) ─▶ Worker ──▶ Hub Durable Object ──▶ sweep: h
 - **One post per conversation.** Its title is `[<Account> #<id>] <customer> — <subject or first message>`. It
   opens with a ticket header (channel, inbox, customer contact, the customer's earlier tickets, "Open in Chatwoot"), every message follows under
   its sender's name (customers, agents, 🔒 private notes, activity lines), and it ends with the ticket's card:
-  status, assignee and labels, **⏳ Asked** from the first unanswered customer message and, when
-  snoozed until a time, when it wakes, with buttons. The [support queue](#support-queue) uses the same wait.
-  Forum tags follow the conversation (account, status, assignee,
+  status, assignee and labels, **⏳ Asked** from Chatwoot's `waiting_since` and, when snoozed until a
+  time, when it wakes, with buttons. Forum tags follow the conversation (account, status, assignee,
   topic, priority, labels); resolved posts are archived. [How conversations are relayed](https://github.com/Phala-Network/chatwoot-workers/blob/main/packages/chatwoot-discord-relay/docs/relay.md) has the details.
 - Email inline images that Chatwoot stores under its own Active Storage URL are shown as image attachment links; duplicate
   attachment URLs and third-party tracking images are ignored. Customer messages longer than `relay.maxChunks` keep
@@ -414,7 +413,7 @@ came in between). The hook is a convenience: if a call is lost, the card offers 
 ## Support queue
 
 With `queue`, the cron run at minute 0 of every hour posts a message in `queue.channelId` that lists
-the open tickets of every account whose customer waits for a reply or
+the open tickets of every account whose customer waits for a reply (Chatwoot's `waiting_since`) or
 that have no assignee, longest wait first. Its header counts the open tickets waiting for a reply
 and those with no assignee; each line is the ticket's post (or its dashboard link), when the customer
 asked (a Discord timestamp each reader sees as relative, "3 hours ago"), and its assignee, whom it pings when they are a linked agent. A
@@ -424,27 +423,9 @@ takes it or replies. Snoozed tickets (with when they wake, if snoozed until a ti
 without pings or escalations. Once Chatwoot wakes a snoozed ticket, it is treated like any other open ticket:
 the normal counts, pings, and escalation rules apply. Pending age uses the existing `waiting_since`; it is not the current turn's start.
 
-For open and snoozed tickets, the queue and the card's **⏳ Asked** use the first public customer
-message since the last public answering reply. A public reply from an agent or bot clears the wait;
-private notes, activity lines, templates (greetings and out-of-office notices), deleted messages,
-failed replies, and automatic email replies do not answer it. Messages from blocked contacts do not
-start a wait. Assignment and bot handoff do not restart it. Whenever a conversation read observes
-it resolved, the relay clears the wait even if nobody sent a public reply. Resolved tickets are
-not waiting and their cards show no **⏳ Asked**; the next customer message starts a new wait.
-
-If a ticket is resolved and reopened before any relay run observes the resolved state, its old
-wait can remain. Chatwoot v4.18.0's structured status activity is created by an asynchronous job
-([`ActivityMessageHandler`](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/models/concerns/activity_message_handler.rb#L50-L70),
-[`ActivityMessageJob`](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/jobs/conversations/activity_message_job.rb#L4-L5))
-and may be absent when no activity content is generated. Its message order can therefore differ
-from the actual status changes. The relay does not use that activity or parse its text to infer
-an unobserved resolution: a late activity could incorrectly clear a new customer wait.
-
-Until the relay records a customer message or answering reply, or observes the ticket resolved,
-including for tickets active before upgrading, it falls back to Chatwoot's `waiting_since`.
-Pending tickets always use Chatwoot's value because their customer messages may still be held
-for the inbox bot. An escalation may repeat once
-when a ticket's wait start changes from the fallback to the recorded message time.
+The queue and card use Chatwoot's `waiting_since` as their single source of customer waits.
+Auto-answered tickets must leave Chatwoot without a wait: chatwoot-router 0.12.0 snoozes such kinds
+with their owner until the customer replies.
 
 Nothing is posted when there is no such ticket. A line holds no customer text, and mentions are
 allowed from the tickets' fields only, never from text. The queue reads up to four pages (100

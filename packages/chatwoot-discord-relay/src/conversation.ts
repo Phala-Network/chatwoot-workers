@@ -71,8 +71,6 @@ const HELD_RECHECK_MS = 5 * 60 * 1000;
 const HELD_KEY = "held";
 /** The post registered with the Hub (see claimThread). */
 const CLAIMED_KEY = "claimed";
-/** The customer wait last reported to the Hub. */
-const REPORTED_WAIT_KEY = "reported-customer-wait";
 
 export function conversationStub(env: Env, accountId: number, conversationId: number) {
   return env.CONVERSATION.getByName(`${accountId}:${conversationId}`);
@@ -206,7 +204,6 @@ export class Conversation extends DurableObject<Env> {
           return "done";
         case "conversation": {
           const outcome = await processConversation(services, payload.accountId, payload.conversationId);
-          await this.reportCustomerWait(payload.accountId, payload.conversationId);
           if (outcome === "pending") {
             const held = this.store.get(HELD_KEY) !== undefined;
             this.store.set(HELD_KEY, "1");
@@ -336,14 +333,6 @@ export class Conversation extends DurableObject<Env> {
     if (claimed) this.store.set(CLAIMED_KEY, threadId);
     else log.warn("post belongs to another conversation", { accountId, conversationId, threadId });
     return claimed;
-  }
-
-  /** Reports only changes; a failed RPC leaves the previous value so the job retries it. */
-  private async reportCustomerWait(accountId: number, conversationId: number): Promise<void> {
-    const since = this.store.conversation(accountId, conversationId)?.customerWaitingSince;
-    if (since === undefined || this.store.get(REPORTED_WAIT_KEY) === String(since)) return;
-    await hub(this.env).reportCustomerWait(accountId, conversationId, since);
-    this.store.set(REPORTED_WAIT_KEY, String(since));
   }
 
   /** A post forgotten because its conversation is gone is no longer found for commands. */

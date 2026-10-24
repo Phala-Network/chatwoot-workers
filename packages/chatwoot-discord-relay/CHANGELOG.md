@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-10-24
+
+### Changed
+
+- The support queue and ticket card's **⏳ Asked** read Chatwoot's `waiting_since` again as the
+  single source of customer waits. Auto-answered tickets must leave Chatwoot without a wait;
+  chatwoot-router 0.12.0 snoozes such kinds with their owner until the customer replies.
+
+### Removed
+
+- Relay 0.53.0's message-derived customer wait, its Hub copy, and the reporting RPC. A storage
+  migration drops `customer_waiting_since` and deletes the `reported-customer-wait` cache key
+  in both Conversation and Hub Durable Objects.
+
 ## [0.53.0] - 2026-10-24
 
 ### Fixed
@@ -1003,7 +1017,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.53.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.54.0...HEAD
+[0.54.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.53.0...chatwoot-discord-relay@0.54.0
 [0.53.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.52.0...chatwoot-discord-relay@0.53.0
 [0.52.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.51.0...chatwoot-discord-relay@0.52.0
 [0.51.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.50.0...chatwoot-discord-relay@0.51.0
