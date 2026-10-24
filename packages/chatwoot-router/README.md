@@ -22,7 +22,10 @@ is each routed account's native agent bot, connected to the inboxes it should ro
 3. It applies the topic and kind labels, sends the kind's canned reply if it has one (at most once per
    conversation), then optionally calls the configured before-handoff service. The service can write context to the
    conversation before the turn ends: it returns success only after its write is complete. The router then ends the
-   turn: the kind's resolved or snoozed status, the confident owner, or a handoff to people (`status=open`). A greeting
+   turn: a `resolved` kind is set aside without assigning an owner; a `snoozed` kind waits for the customer and still
+   assigns the confident owner, after snoozing so Chatwoot does not mark the customer as waiting for a human.
+   Snoozed kinds get a topic label under the same rules as routed tickets; resolved kinds do not.
+   Other tickets go to their confident owner or a handoff to people (`status=open`). A greeting
    with no request yet stays pending until the customer says more, for up to 30 minutes (an email that asks for nothing
    will not say more); then it is routed on. A resolved
    ticket that a customer message reopens keeps its owner: its kind may still end it (a thanks is resolved),
@@ -140,7 +143,7 @@ no unpublished shared package needs installing.
 | `routing.kinds` | object: account id → (kind name → kind) | unset | Kinds of ticket Jev recognizes in routed accounts, added as labels beside the topic, and what is done once when it does ([How it works](#how-it-works)). Kind names are the account's label names (1–40 lower-case letters, digits, `_`, or `-`); `none` is reserved. Unset: none. |
 | `routing.kinds.<id>.<name>.covers` | 1–1000 characters | required | What the kind is: Jev's criterion for recognizing it. |
 | `routing.kinds.<id>.<name>.cannedResponse` | short code | unset | The account's Chatwoot canned response sent to the customer once, by the account's agent bot (`CHATWOOT_AGENT_BOT_TOKENS`); handoff if it is missing. |
-| `routing.kinds.<id>.<name>.status` | `resolved` or `snoozed` | unset | Set instead of routing the ticket (`snoozed`: until the customer's next message), after the reply of a `cannedResponse`; a new customer message reopens it. |
+| `routing.kinds.<id>.<name>.status` | `resolved` or `snoozed` | unset | Set after the reply of a `cannedResponse`: `resolved` sets the ticket aside without assigning an owner; `snoozed` waits for the customer's next message and still assigns the confident owner. A new customer message reopens either. |
 | `routing.kinds.<id>.<name>.label` | boolean | `true` | Whether the ticket gets the kind's label; `false` for a kind that is not a kind of ticket, such as a thank-you that is only resolved. |
 
 The identified-only check uses `meta.sender.identifier` from the live conversation the router already fetches.

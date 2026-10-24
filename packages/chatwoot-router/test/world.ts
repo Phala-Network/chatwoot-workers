@@ -167,9 +167,11 @@ export function world(ticket: Ticket = {}, answers: Answers = { owner: ["cloud",
           return;
         }
         ticket.assignee = { id: assigneeId, name: "Owner" };
-        if (ticket.assigneeType === "AgentBot") ticket.status = "open";
+        if (ticket.status === "pending" && ticket.assigneeType === "AgentBot") {
+          ticket.status = "open";
+          ticket.messages?.push(activity((ticket.messages.at(-1)?.id ?? 0) + 1, "open"));
+        }
         ticket.assigneeType = "User";
-        ticket.messages?.push(activity((ticket.messages.at(-1)?.id ?? 0) + 1, "open"));
       }),
       mutation("toggle_status", (request) => {
         ticket.status = JSON.parse(request.body).status;

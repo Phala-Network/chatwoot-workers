@@ -163,6 +163,10 @@ describe("identified-only inboxes", () => {
 });
 
 describe("native bot turns", () => {
+  const snoozedKinds = {
+    ...KINDS,
+    kinds: { "1": { ...KINDS.kinds["1"], startup: { ...KINDS.kinds["1"].startup, status: "snoozed" } } },
+  };
   const withHook = (routing: object) => ({
     ...routing,
     beforeHandoff: { url: `https://${BEFORE_HANDOFF}` },
@@ -352,7 +356,105 @@ describe("native bot turns", () => {
       expect(mutations.every((request) => request.headers.get("api_access_token") === "bot-token")).toBe(true);
       expect(sent(mock.requests, "POST", JEV)).toHaveLength(1);
       expect(mock.ticket.status).toBe(kind === "startup" ? "open" : kind === "newsletter" ? "snoozed" : "resolved");
-      if (kind !== "startup") expect(mock.ticket.assignee).toBeNull();
+      expect(mock.ticket.assignee?.id ?? null).toBe(["startup", "newsletter"].includes(kind) ? 6 : null);
+      expect(mock.ticket.labels).toEqual(["startup", "newsletter"].includes(kind) ? ["billing", kind] : [kind]);
+      if (["bounty", "spam"].includes(kind)) {
+        expect(JSON.parse(mutations.at(-1)?.body ?? "{}")).toEqual({ assignee_id: null });
+      }
+    },
+  );
+
+  it("replies, adds context, snoozes, then assigns the confident owner without reopening", async () => {
+    const mock = world({}, { owner: ["cloud", 1], kind: ["startup", 1] });
+    const ctx = context(new MemoryStore(), withHook(snoozedKinds), { BEFORE_HANDOFF_SECRET });
+    await routeConversation(ctx, 1, 5);
+    expect(mock.ticket.status).toBe("snoozed");
+    expect(mock.ticket.assigneeType).toBe("User");
+    expect(mock.ticket.assignee?.id).toBe(6);
+    expect(mock.ticket.labels).toEqual(["billing", "startup"]);
+    const posts = mock.requests.filter((request) => request.method === "POST");
+    expect(posts.map((request) => `${request.url.hostname}${request.url.pathname}`)).toEqual([
+      JEV,
+      `${CW}/labels`,
+      `${CW}/messages`,
+      BEFORE_HANDOFF,
+      `${CW}/toggle_status`,
+      `${CW}/assignments`,
+    ]);
+    expect(JSON.parse(posts.at(-2)?.body ?? "{}")).toEqual({ status: "snoozed" });
+    expect(JSON.parse(posts.at(-1)?.body ?? "{}")).toEqual({ assignee_id: 6, assignee_type: "User" });
+    expect(
+      posts
+        .filter((request) => request.url.hostname === "chatwoot.example.com")
+        .every((request) => request.headers.get("api_access_token") === "bot-token"),
+    ).toBe(true);
+    expect(JSON.parse(ctx.store.get("turn:1:5") ?? "{}").expected.status).toBe("snoozed");
+    expect(mock.ticket.messages?.filter((message) => message.message_type === 2)).toMatchObject([
+      { id: 3, content_attributes: { activity: { type: "conversation_status_changed", status: "snoozed" } } },
+    ]);
+  });
+
+  it.each<[string, number]>([
+    ["unclear", 1],
+    ["cloud", 0.1],
+  ])("snoozes and releases when owner %s has confidence %s", async (owner, confidence) => {
+    const mock = world({}, { owner: [owner, confidence], kind: ["startup", 1] });
+    await routeConversation(context(new MemoryStore(), withHook(snoozedKinds), { BEFORE_HANDOFF_SECRET }), 1, 5);
+    expect(mock.ticket.status).toBe("snoozed");
+    expect(mock.ticket.assignee).toBeNull();
+    expect(sent(mock.requests, "POST", `${CW}/messages`)).toHaveLength(1);
+    expect(sent(mock.requests, "POST", BEFORE_HANDOFF)).toHaveLength(1);
+    expect(sent(mock.requests, "POST", `${CW}/toggle_status`).map((request) => JSON.parse(request.body))).toEqual([
+      { status: "snoozed" },
+    ]);
+    expect(sent(mock.requests, "POST", `${CW}/assignments`).map((request) => JSON.parse(request.body))).toEqual([
+      { assignee_id: null },
+    ]);
+  });
+
+  it.each(["fail", "lose"] as const)(
+    "uses non-pending release on retry after an assignment %s following snooze",
+    async (failure) => {
+      const mock = world({ [failure]: { assignments: 1 } }, { owner: ["cloud", 1], kind: ["startup", 1] });
+      const ctx = context(new MemoryStore(), withHook(snoozedKinds), { BEFORE_HANDOFF_SECRET });
+      await expect(routeConversation(ctx, 1, 5)).rejects.toThrow("503");
+      expect(mock.ticket.status).toBe("snoozed");
+      expect(mock.ticket.assignee?.id).toBe(failure === "fail" ? 1 : 6);
+      recordFailure(ctx.store, 1, 5);
+      await routeConversation(ctx, 1, 5);
+      expect(mock.ticket.status).toBe("snoozed");
+      expect(mock.ticket.assignee?.id ?? null).toBe(failure === "fail" ? null : 6);
+      expect(sent(mock.requests, "POST", `${CW}/assignments`).map((request) => JSON.parse(request.body))).toEqual([
+        { assignee_id: 6, assignee_type: "User" },
+        ...(failure === "fail" ? [{ assignee_id: null }] : []),
+      ]);
+      expect(sent(mock.requests, "POST", JEV)).toHaveLength(1);
+      expect(sent(mock.requests, "POST", `${CW}/messages`)).toHaveLength(1);
+      expect(sent(mock.requests, "POST", BEFORE_HANDOFF)).toHaveLength(1);
+      expect(sent(mock.requests, "POST", `${CW}/toggle_status`)).toHaveLength(1);
+    },
+  );
+
+  it.each(["person", "other bot", "pending", "open"])(
+    "defers an owner assignment after a %s takeover following snooze",
+    async (change) => {
+      const mock = world(
+        {
+          during: (operation) => {
+            if (operation !== "toggle_status") return;
+            if (change === "pending" || change === "open") mock.ticket.status = change;
+            else {
+              mock.ticket.assignee = { id: 7 };
+              mock.ticket.assigneeType = change === "person" ? "User" : "AgentBot";
+            }
+          },
+        },
+        { owner: ["cloud", 1], kind: ["startup", 1] },
+      );
+      expect(await routeConversation(context(new MemoryStore(), snoozedKinds), 1, 5)).toBe("defer");
+      expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+      expect(mock.ticket.status).toBe(change === "pending" || change === "open" ? change : "snoozed");
+      expect(mock.ticket.assignee?.id).toBe(change === "pending" || change === "open" ? 1 : 7);
     },
   );
 
@@ -1143,12 +1245,15 @@ describe("native bot turns", () => {
     expect(sent(mock.requests, "POST", JEV)).toEqual([]);
   });
 
-  it("hands off an owner removed from the account instead of accepting Chatwoot's silent unassignment", async () => {
-    const mock = world({ agents: [] });
-    await routeConversation(context(), 1, 5);
-    expect(mock.ticket.status).toBe("open");
-    expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
-  });
+  it.each([ROUTING, snoozedKinds])(
+    "hands off an owner removed from the account instead of accepting Chatwoot's silent unassignment",
+    async (routing) => {
+      const mock = world({ agents: [] }, { owner: ["cloud", 1], kind: ["startup", 1] });
+      await routeConversation(context(new MemoryStore(), routing), 1, 5);
+      expect(mock.ticket.status).toBe("open");
+      expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+    },
+  );
 
   it("does not carry a failed old handoff or its failure limit into a new turn", async () => {
     const mock = world({ fail: { toggle_status: 1 } }, { owner: ["unclear", 1] });
@@ -1190,32 +1295,35 @@ describe("native bot turns", () => {
     expect(sent(mock.requests, "POST", JEV)).toEqual([]);
   });
 
-  it("fits a complete five-page turn with labels, reply and assignment into the configured budget", async () => {
-    const mock = world(
-      {
-        messages: [
-          activity(1, "pending"),
-          incoming(2),
-          ...Array.from({ length: 79 }, (_, i) => ({ id: i + 3, message_type: 2 })),
-        ],
-      },
-      { owner: ["cloud", 1], kind: ["startup", 1] },
-    );
-    const ctx = context(new MemoryStore(), KINDS);
-    const budget = new Budget(45, ctx.fetch);
-    await routeConversation(
-      {
-        ...ctx,
-        fetch: budget.fetch,
-        chatwoot: chatwootClient(ctx.settings.config.chatwoot.baseUrl, "user-token", budget.fetch),
-      },
-      1,
-      5,
-    );
-    expect(mock.ticket.assignee).toMatchObject({ id: 6 });
-    expect(sent(mock.requests, "POST", `${CW}/messages`)).toHaveLength(1);
-    expect(budget.remaining).toBeGreaterThanOrEqual(0);
-  });
+  it.each([KINDS, snoozedKinds])(
+    "fits a complete five-page turn with reply and assignment into the budget",
+    async (routing) => {
+      const mock = world(
+        {
+          messages: [
+            activity(1, "pending"),
+            incoming(2),
+            ...Array.from({ length: 79 }, (_, i) => ({ id: i + 3, message_type: 2 })),
+          ],
+        },
+        { owner: ["cloud", 1], kind: ["startup", 1] },
+      );
+      const ctx = context(new MemoryStore(), withHook(routing), { BEFORE_HANDOFF_SECRET });
+      const budget = new Budget(45, ctx.fetch);
+      await routeConversation(
+        {
+          ...ctx,
+          fetch: budget.fetch,
+          chatwoot: chatwootClient(ctx.settings.config.chatwoot.baseUrl, "user-token", budget.fetch),
+        },
+        1,
+        5,
+      );
+      expect(mock.ticket.assignee).toMatchObject({ id: 6 });
+      expect(sent(mock.requests, "POST", `${CW}/messages`)).toHaveLength(1);
+      expect(budget.remaining).toBeGreaterThanOrEqual(0);
+    },
+  );
 
   it("rejects unknown Jev choices before any Chatwoot mutation", async () => {
     const mock = world({}, { owner: ["invented-owner", 1] });

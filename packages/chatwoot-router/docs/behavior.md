@@ -1,6 +1,6 @@
 # Routing behavior
 
-The precise rules the router follows, and the Chatwoot v4.18.0 contracts they rest on. The
+The precise rules the router follows, and the Chatwoot contracts they rest on (versions cited below). The
 [README](../README.md#how-it-works) has the overview.
 
 Chatwoot owns the lifecycle: a conversation is the bot's while pending, and people's otherwise.
@@ -66,9 +66,14 @@ may point to another deployment of that API, for example a proxy or gateway.
   Bot and user assignees are distinguished by `assignee_type`.
 - Before **each** action, re-read the inbox link, pending status, assignee, turn boundary, inputs and public human
   replies. A changed input defers the job to decide again. Apply topic/kind labels (a kind with `label: false` gets none), then the kind's canned reply,
-  then end the turn: set the kind's resolved/snoozed status and immediately release the bot, assign a confident
-  owner, or use explicit bot `status=open` handoff. Chatwoot keeps the bot on resolve/snooze, so release is part of
-  that same ending, with a fresh ownership/status read. A failed release keeps the durable job for retry, even
+  then end the turn: a resolved kind is set aside without assigning an owner; a snoozed kind waits for the customer
+  and still gets the confident owner. Snoozed kinds use the same topic-label rules as routed tickets; resolved
+  kinds do not get a topic. Other tickets get a confident owner or explicit bot `status=open` handoff.
+  After the reply and optional before-handoff hook, set `snoozed` before assigning: bot snooze does not call
+  `bot_handoff!`, and assignment of a non-pending ticket neither opens it nor re-arms `waiting_since`.
+  Assignment clears `ai_assignee` and creates no status activity when the status stays snoozed. Recheck ownership,
+  inbox and snoozed status before assigning. Chatwoot keeps the bot on resolve/snooze; without an owner, release
+  it in that same ending with a fresh ownership/status read. A failed release keeps the durable job for retry, even
   though the sweep excludes closed history. Clearing only the bot creates no assignment/status activity and does
   not move the turn boundary; Chatwoot still dispatches assignment/update events. Preserve human topic labels and
   validate that an owner still belongs to the account.
@@ -86,7 +91,10 @@ may point to another deployment of that API, for example a proxy or gateway.
   confirmed history permits the kind's ending status. This confirms creation in Chatwoot, not channel delivery;
   a delivery failure seen in the final fresh read also hands off. Labels, assignment and status use
   current Chatwoot state, without an effects ledger or custom coordination attributes. A missing canned response
-  hands off immediately. After three processing failures (initial, +5s, +10s), persist handoff mode. Further retries
+  hands off immediately. If assignment fails after snoozing, the existing non-pending retry releases the bot and
+  leaves the ticket snoozed without an owner; it does not repeat the reply, hook or status change. If Chatwoot
+  committed the assignment but its response was lost, retry preserves that owner.
+  After three processing failures (initial, +5s, +10s), persist handoff mode. Further retries
   only revalidate the turn and hand off, with backoff capped at 30 minutes. Handoff failures keep the job; deleted
   conversations end it. Disconnected brand-bot pending tickets use native bot `status=open` handoff without Jev
   or a turn-history read; failures retry until the handoff succeeds. Other bots and people are untouched. Credentials/service failures need repair before handoff can succeed.
@@ -99,6 +107,12 @@ may point to another deployment of that API, for example a proxy or gateway.
 After handoff, later customer messages belong to people. Resolved tickets reopen pending in an active bot inbox,
 with their assignee, and are decided on their **new turn's** messages. Snoozed tickets reopen open and go to people. A canned reply
 following a customer message counts as answering it in the relay, even if that message was outside Jev's window.
+
+The snoozed-kind contracts were checked against Chatwoot v4.19.0:
+[outgoing bot replies clear the wait, and customer messages reopen snoozed tickets directly to open](https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/models/message.rb#L348-L420),
+[bot handoff re-arms the wait](https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/models/conversation.rb#L184-L193),
+[only bot pending-to-open status changes hand off](https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/controllers/api/v1/accounts/conversations_controller.rb#L83-L100),
+and [assignment only opens/re-arms pending AI-held tickets and always clears the bot](https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/services/conversations/assignment_service.rb#L16-L35).
 
 The API contracts were checked against Chatwoot v4.18.0:
 [assignment service](https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/app/services/conversations/assignment_service.rb)

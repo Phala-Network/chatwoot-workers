@@ -256,9 +256,14 @@ export async function routeConversation(
     : decision.kind && decision.kindConfidence >= routing.minConfidence
       ? kinds[decision.kind]
       : undefined;
+  // Snoozed tickets reopen straight to open, so they need their owner and topic already in place.
+  // Chatwoot v4.19.0: https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/models/message.rb#L414-L420
+  const routesToOwner = kind?.status !== "resolved";
   // A kind is actionable even when its text happens to look like a greeting.
   const assignee =
-    decision.owner && decision.ownerConfidence >= routing.minConfidence ? owners[decision.owner]?.assignee : undefined;
+    routesToOwner && decision.owner && decision.ownerConfidence >= routing.minConfidence
+      ? owners[decision.owner]?.assignee
+      : undefined;
   let current = await fresh();
   if (current === "defer" || !current) return current;
   if (!unidentified && current.handoff) return handoff(current);
@@ -268,7 +273,7 @@ export async function routeConversation(
   const waiting = Date.now() / 1000 - lastSaid < REQUEST_WAIT_SECONDS;
   if (!kind && decision.noRequest && input.count < MAX_MESSAGES && !current.conversation.assignee && waiting) return;
   const topic =
-    !kind?.status &&
+    routesToOwner &&
     decision.topic !== null &&
     Object.hasOwn(routing.topics ?? {}, decision.topic) &&
     decision.topicConfidence >= routing.minConfidence &&
@@ -310,7 +315,7 @@ export async function routeConversation(
       }
     }
   }
-  if (assignee !== undefined && !kind?.status) {
+  if (assignee !== undefined) {
     // AssignmentService silently assigns nobody for a user outside this account.
     const agents = await chatwoot.listAgents(accountId);
     if (!agents.some((agent) => agent.id === assignee)) return handoff();
@@ -322,15 +327,25 @@ export async function routeConversation(
     await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
     await bot.setStatus(accountId, conversationId, { status: kind.status });
     expectActivity(store, accountId, conversationId, { status: kind.status });
-    // Status keeps ai_assignee in Chatwoot. Finish this turn by releasing it without another activity.
-    await release();
+    // Status keeps ai_assignee. Without an owner, finish by releasing it without another activity.
+    if (assignee === undefined || !owns(current.raw)) {
+      await release();
+      return;
+    }
+    // Snooze before assignment: only pending AI-held tickets reopen and re-arm waiting_since on assignment.
+    // Assignment clears ai_assignee either way; snoozed assignment creates no status activity.
+    // Chatwoot v4.19.0: https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/services/conversations/assignment_service.rb#L16-L35
+    // Bot toggle_status calls bot_handoff! only for pending -> open:
+    // https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/controllers/api/v1/accounts/conversations_controller.rb#L83-L100
+    const latest = await chatwoot.getConversation(accountId, conversationId);
+    if (latest?.status !== kind.status || latest.inbox_id !== initial.raw.inbox_id || !owns(latest)) return "defer";
   } else if (assignee !== undefined && current.raw.meta?.assignee_type === "AgentBot") {
     await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
-    await bot.assign(accountId, conversationId, assignee);
-    expectActivity(store, accountId, conversationId, { status: "open" });
   } else {
     return handoff(current);
   }
+  await bot.assign(accountId, conversationId, assignee);
+  if (!kind?.status) expectActivity(store, accountId, conversationId, { status: "open" });
   // Assignment itself ends a bot-assigned turn. No reply or status action may follow it.
   return undefined;
 }
