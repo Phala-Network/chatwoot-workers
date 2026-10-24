@@ -343,7 +343,10 @@ export async function routeConversation(
     // Bot toggle_status calls bot_handoff! only for pending -> open:
     // https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/controllers/api/v1/accounts/conversations_controller.rb#L83-L100
     const latest = await chatwoot.getConversation(accountId, conversationId);
-    if (latest?.status !== status || latest.inbox_id !== initial.raw.inbox_id || !owns(latest)) return "defer";
+    if (latest?.status !== status || latest.inbox_id !== initial.raw.inbox_id || !owns(latest)) {
+      log.warn("snoozed conversation changed before owner assignment; deferring", { accountId, conversationId });
+      return "defer";
+    }
   } else if (assignee !== undefined && current.raw.meta?.assignee_type === "AgentBot") {
     await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
   } else {
