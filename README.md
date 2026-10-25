@@ -1,7 +1,6 @@
 # chatwoot-workers
 
 Two independently deployed Cloudflare Workers for Chatwoot support teams:
-
 - [chatwoot-discord-relay](packages/chatwoot-discord-relay/README.md) mirrors conversations into Discord forum posts,
   with commands, agent replies, AI drafts, and the support queue.
 - [chatwoot-router](packages/chatwoot-router/README.md) classifies tickets with TypeSafe Jev, assigns owners, adds

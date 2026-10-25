@@ -6,7 +6,6 @@ explained in [SECURITY.md](SECURITY.md). Keep changes scoped, with behavior test
 ## Workspace development
 
 This private npm workspace root contains two independently published packages:
-
 - `packages/chatwoot-discord-relay`: the Discord relay and Hub Durable Object.
 - `packages/chatwoot-router`: TypeSafe Jev routing and the Router Durable Object.
 - `shared`: Chatwoot API/schema types, webhook authentication, the SQLite queue/cache, subrequest budget,
