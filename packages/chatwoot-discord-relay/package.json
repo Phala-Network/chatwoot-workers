@@ -65,7 +65,7 @@
     "prepack": "npm run build:package"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "2.0.0-beta.sha-805ec1ff3"
+    "@cloudflare/vite-plugin": "2.0.0-beta.v.3"
   },
   "dependencies": {
     "discord-api-types": "^0.38.56",
