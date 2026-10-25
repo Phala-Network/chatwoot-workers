@@ -16,7 +16,6 @@ Only the latest release of each package and the latest commit on `main` receive 
 
 These Workers hold credentials that can act in Chatwoot and Discord, so please pay particular
 attention to:
-
 - Request authentication: Chatwoot webhook HMAC signatures (`shared/chatwoot/signature.ts`) and Discord
   interaction Ed25519 signatures (`packages/chatwoot-discord-relay/src/index.ts`).
 - Authorization of commands: the Discord user must be linked in config and have their own

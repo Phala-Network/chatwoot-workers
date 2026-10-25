@@ -18,15 +18,15 @@
     "check:package": "bash scripts/check-package.sh"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
-    "@cloudflare/vitest-plugin": "1.4.2",
+    "@biomejs/biome": "^2.6.2",
+    "@cloudflare/vitest-plugin": "1.4.6",
     "@types/node": "^24.19.1",
     "cf": "1.0.0-beta.20",
     "esbuild": "0.28.2",
     "jsonc-parser": "^3.3.1",
     "openapi-fetch": "^0.17.0",
     "typescript": "~7.0.2",
-    "vite": "^8.3.3",
+    "vite": "^8.3.5",
     "vitest": "^4.1.12",
     "zod": "^4.6.7"
   },

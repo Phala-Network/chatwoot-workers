@@ -68,7 +68,7 @@
     "@cloudflare/vite-plugin": "2.0.0-beta.v.3"
   },
   "dependencies": {
-    "discord-api-types": "^0.38.56",
+    "discord-api-types": "^0.38.57",
     "discord-interactions": "^4.4.0",
     "hono": "^4.13.13",
     "jsonc-parser": "^3.3.1",

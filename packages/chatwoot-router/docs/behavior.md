@@ -8,7 +8,6 @@ Chatwoot owns the lifecycle: a conversation is the bot's while pending, and peop
 System One is TypeSafe's class of decision models, and Jev is its first model. The router calls TypeSafe's
 System One API (`/v1/systemone`) with the model in `routing.model` (Jev by default). `routing.endpoint`
 may point to another deployment of that API, for example a proxy or gateway.
-
 - Each routed account has a configured brand bot. Routing is limited to inboxes linked to that exact account's
   bot, discovered through `GET inboxes/{id}/agent_bot`. The wrapped `agent_bot.id` and `account_id` must match;
   `agent_bot: null` or `agent_bot: {}` means unlinked. Foreign-account and system bots are rejected. The user token

@@ -1,23 +1,23 @@
 # Connecting an AI agent
 
 chatwoot-discord-relay does not run an AI model. It gives an AI agent (any Discord bot you operate,
-called the *triage bot* in the configuration) a place in the ticket workflow: the agent is called
+called the _triage bot_ in the configuration) a place in the ticket workflow: the agent is called
 on customer messages, reads the ticket in its forum post, and proposes a reply that a human sends.
 This page is the contract such an agent follows.
 
 ![A ticket post: a notice after the customer's message calls the triage bot; the bot answers with an analysis and a draft; an agent sends the draft with Apps → Reply with this](assets/ticket.png)
 
-*Illustration with fictional data.*
+_Illustration with fictional data._
 
 ## Configuration
 
 Set `triage.userId` in `CONFIG` to the agent's Discord user id. Optional settings (see the
 [configuration reference](../README.md#configuration-reference)):
 
-| Key | Default | Meaning |
-|---|---|---|
-| `triage.name` | `Triage bot` | Name used in the notes posted when the budget is used up. |
-| `triage.perConversationPerHour` / `perHour` | `5` / `30` | How many customer messages call the agent, per conversation and in total, each hour. |
+| Key                                         | Default      | Meaning                                                                              |
+| ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| `triage.name`                               | `Triage bot` | Name used in the notes posted when the budget is used up.                            |
+| `triage.perConversationPerHour` / `perHour` | `5` / `30`   | How many customer messages call the agent, per conversation and in total, each hour. |
 
 The agent's bot needs to see the forum and its posts, read message content there, and send
 messages in posts (threads).
@@ -59,7 +59,6 @@ current hour (UTC clock hour), or `perHour` times in all conversations together,
 takes the place of the call. A call counts once, however often the run is retried.
 
 The agent must:
-
 1. React only to messages in the forum's posts whose content contains its own mention token.
    The relay's webhook (named `Chatwoot`) posts them, so the agent must not ignore messages from
    webhooks or bots when they mention it. Customer text cannot contain a working mention token
@@ -87,7 +86,7 @@ I have issued a corrected copy; you will find it under Billing → Invoices.
   other messages. A message without a code block has no draft.
 - Code blocks follow CommonMark: a fence of three or more backticks or tildes, closed by the same
   character, at least as many, on a line of its own. When the draft itself contains a code block,
-  fence it with more backticks (`` ```` ``) or with tildes (`~~~`).
+  fence it with more backticks (` ```` `) or with tildes (`~~~`).
 - Keep the draft under 4,000 characters, the reply editor's limit.
 
 A human agent then uses **Apps → Reply with this** on that message. It opens the `/reply` editor
@@ -117,7 +116,6 @@ The post is enough for most tickets: its header lists the customer's earlier tic
 may read more (those conversations' messages, contact details) from Chatwoot's API. Chatwoot access tokens are not scoped: any agent's token can also
 send messages. Give the AI agent its own Chatwoot user, a member of only the inboxes it needs, and
 let it make read (`GET`) requests only.
-
 - The ticket header that opens every post links to the conversation:
   `https://<chatwoot>/app/accounts/<account id>/conversations/<conversation id>`. The post title
   starts with `[<Account> #<conversation id>]`.

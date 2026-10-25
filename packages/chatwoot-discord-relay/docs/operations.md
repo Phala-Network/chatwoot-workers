@@ -17,7 +17,6 @@ Chatwoot when you install (for example the id in the newest conversation's `mess
 
 If posts already exist (for example from another relay), the service must not open a second
 post for those conversations.
-
 1. Store each existing post URL in its conversation's `discord_thread` attribute
    (`https://discord.com/channels/<guild id>/<thread id>`). A conversation without a mapping
    adopts the linked post if it still exists in that account's forum.
