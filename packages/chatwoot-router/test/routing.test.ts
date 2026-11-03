@@ -172,6 +172,209 @@ describe("native bot turns", () => {
     beforeHandoff: { url: `https://${BEFORE_HANDOFF}` },
   });
 
+  describe("fallback owners", () => {
+    const fallback = { ...KINDS, fallbackOwners: { "1": "sales" } };
+
+    it.each<[string, number, number]>([
+      ["cloud", 0.48, 7],
+      ["unclear", 0.84, 7],
+      ["cloud", 1, 6],
+    ])("routes owner %s at confidence %s to agent %s", async (owner, confidence, assignee) => {
+      const mock = world({}, { owner: [owner, confidence] });
+      await routeConversation(context(new MemoryStore(), fallback), 1, 5);
+      expect(mock.ticket.status).toBe("open");
+      expect(mock.ticket.assignee).toMatchObject({ id: assignee });
+      expect(mock.ticket.labels).toEqual(["billing"]);
+      expect(sent(mock.requests, "POST", `${CW}/toggle_status`)).toEqual([]);
+    });
+
+    it("replies, calls the hook, snoozes, then assigns the fallback for an unsure owner", async () => {
+      const mock = world({}, { owner: ["cloud", 0.48], kind: ["startup", 0.87] });
+      const ctx = context(new MemoryStore(), withHook({ ...snoozedKinds, fallbackOwners: fallback.fallbackOwners }), {
+        BEFORE_HANDOFF_SECRET,
+      });
+      await routeConversation(ctx, 1, 5);
+      expect(mock.ticket.status).toBe("snoozed");
+      expect(mock.ticket.assignee).toMatchObject({ id: 7 });
+      expect(
+        mock.requests.filter((request) => request.method === "POST").map((request) => request.url.pathname),
+      ).toEqual([
+        "/v1/systemone",
+        "/api/v1/accounts/1/conversations/5/labels",
+        "/api/v1/accounts/1/conversations/5/messages",
+        "/hook",
+        "/api/v1/accounts/1/conversations/5/toggle_status",
+        "/api/v1/accounts/1/conversations/5/assignments",
+      ]);
+      expect(JSON.parse(ctx.store.get("turn:1:5") ?? "{}").expected.status).toBe("snoozed");
+    });
+
+    it.each(["spam", "thanks", "unidentified"])("does not assign a fallback for resolved %s", async (reason) => {
+      const mock = world(
+        { identifier: null },
+        { owner: ["unclear", 1], kind: [reason === "thanks" ? "thanks" : "spam", 1] },
+      );
+      await routeConversation(
+        context(new MemoryStore(), { ...fallback, identifiedOnlyInboxes: reason === "unidentified" ? [2] : [] }),
+        1,
+        5,
+      );
+      expect(mock.ticket.status).toBe("resolved");
+      expect(mock.ticket.assignee).toBeNull();
+      expect(sent(mock.requests, "POST", `${CW}/assignments`).map((request) => JSON.parse(request.body))).toEqual([
+        { assignee_id: null },
+      ]);
+    });
+
+    it.each(["three texts", "timeout"])(
+      "keeps greetings pending until %s, then assigns the fallback",
+      async (reason) => {
+        const mock = world(
+          { messages: [{ ...incoming(1, "Hello"), created_at: Date.now() / 1000 }] },
+          { owner: ["unclear", 1], request: ["none", 1] },
+        );
+        const ctx = context(new MemoryStore(), fallback);
+        await routeConversation(ctx, 1, 5);
+        expect(mock.ticket.status).toBe("pending");
+        expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+        if (reason === "three texts") mock.ticket.messages?.push(incoming(2, "Anyone there?"), incoming(3, "Hello?"));
+        else if (mock.ticket.messages?.[0]) mock.ticket.messages[0].created_at = Date.now() / 1000 - 31 * 60;
+        await routeConversation(ctx, 1, 5);
+        expect(mock.ticket.status).toBe("open");
+        expect(mock.ticket.assignee).toMatchObject({ id: 7 });
+      },
+    );
+
+    it.each(["people", "empty input", "disconnected inbox"])(
+      "hands off unassigned when the fallback is not an account agent: %s",
+      async (path) => {
+        const mock = world(
+          {
+            agents: [6],
+            ...(path === "empty input" ? { messages: [] } : path === "disconnected inbox" ? { bot: null } : {}),
+          },
+          { owner: ["unclear", 1] },
+        );
+        await routeConversation(context(new MemoryStore(), fallback), 1, 5);
+        expect(mock.ticket.status).toBe("open");
+        expect(mock.ticket.assignee).toBeNull();
+        expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+      },
+    );
+
+    it.each([
+      "empty input",
+      "unknown reply history",
+      "missing canned response",
+      "unconfirmed reply",
+      "failed bot reply",
+      "owner removed from account",
+      "retry handoff",
+      "disconnected inbox",
+      "missing boundary",
+    ])("assigns the fallback when a bot-held ticket hands off for %s", async (reason) => {
+      const ticket: Ticket = {};
+      if (reason === "empty input") ticket.messages = [];
+      if (reason === "unconfirmed reply") ticket.lose = { messages: 1 };
+      if (reason === "failed bot reply")
+        ticket.during = (operation) => {
+          if (operation === "messages") Object.assign(ticket.messages?.at(-1) ?? {}, { status: "failed" });
+        };
+      if (reason === "owner removed from account") ticket.agents = [7];
+      if (reason === "disconnected inbox") ticket.bot = null;
+      if (reason === "missing boundary")
+        ticket.messages = [incoming(1), { ...activity(2), content_attributes: { deleted: true } }, incoming(3)];
+      const mock = world(ticket, {
+        owner: ["cloud", 1],
+        kind: [reason === "missing canned response" ? "security" : "startup", 1],
+      });
+      const ctx = context(new MemoryStore(), withHook(fallback), { BEFORE_HANDOFF_SECRET });
+      if (reason === "unknown reply history") ctx.store.set("reply:1:5", "attempted");
+      if (reason === "retry handoff") requestHandoff(ctx.store, 1, 5);
+      await routeConversation(ctx, 1, 5);
+      expect(mock.ticket.status).toBe("open");
+      expect(mock.ticket.assignee).toMatchObject({ id: 7 });
+      expect(sent(mock.requests, "POST", `${CW}/toggle_status`)).toEqual([]);
+      expect(sent(mock.requests, "POST", BEFORE_HANDOFF)).toHaveLength(1);
+      expect(mock.requests.filter((request) => request.method === "POST").at(-1)?.url.pathname).toBe(
+        "/api/v1/accounts/1/conversations/5/assignments",
+      );
+    });
+
+    it.each(["human reply", "existing owner", "unassigned reopen"])("preserves %s during handoff", async (reason) => {
+      const ticket: Ticket = { messages: [] };
+      if (reason === "human reply") ticket.messages = [{ id: 1, message_type: 1, sender: { type: "user" } }];
+      else {
+        ticket.assigneeType = reason === "existing owner" ? "User" : null;
+        ticket.assignee = reason === "existing owner" ? { id: 6 } : null;
+      }
+      const mock = world(ticket);
+      await routeConversation(context(new MemoryStore(), fallback), 1, 5);
+      expect(mock.ticket.status).toBe("open");
+      expect(mock.ticket.assignee?.id ?? null).toBe(reason === "existing owner" ? 6 : null);
+      expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+    });
+
+    it.each([
+      ["handoff", "assignment"],
+      ["disconnect", "assignment"],
+      ["handoff", "public reply"],
+      ["disconnect", "public reply"],
+    ])("preserves a takeover on %s during fallback validation: %s", async (path, takeover) => {
+      const mock = world({ messages: [], ...(path === "disconnect" ? { bot: null } : {}) });
+      const ctx = context(new MemoryStore(), fallback);
+      const listAgents = ctx.chatwoot.listAgents;
+      vi.spyOn(ctx.chatwoot, "listAgents").mockImplementation(async (accountId) => {
+        const agents = await listAgents(accountId);
+        if (takeover === "assignment") {
+          mock.ticket.assigneeType = "User";
+          mock.ticket.assignee = { id: 6 };
+          mock.ticket.status = "open";
+        } else mock.ticket.messages?.push({ id: 2, message_type: 1, sender: { type: "user" } });
+        return agents;
+      });
+      await routeConversation(ctx, 1, 5);
+      expect(mock.ticket.assignee?.id ?? null).toBe(takeover === "assignment" ? 6 : null);
+      expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+    });
+
+    it("fits a five-page turn and unconfirmed reply fallback with the hook in the budget", async () => {
+      const mock = world(
+        {
+          messages: [
+            activity(1, "pending"),
+            incoming(2),
+            ...Array.from({ length: 79 }, (_, i) => ({ id: i + 3, message_type: 2 })),
+          ],
+          lose: { messages: 1 },
+        },
+        { owner: ["cloud", 1], kind: ["startup", 1] },
+      );
+      const ctx = context(new MemoryStore(), withHook(fallback), { BEFORE_HANDOFF_SECRET });
+      const budget = new Budget(45, ctx.fetch);
+      await routeConversation(
+        {
+          ...ctx,
+          fetch: budget.fetch,
+          chatwoot: chatwootClient(ctx.settings.config.chatwoot.baseUrl, "user-token", budget.fetch),
+        },
+        1,
+        5,
+      );
+      expect(mock.ticket.assignee).toMatchObject({ id: 7 });
+      expect(sent(mock.requests, "POST", `${CW}/messages`)).toHaveLength(1);
+      expect(budget.remaining).toBeGreaterThanOrEqual(0);
+    });
+
+    it("keeps a Jev failure pending for retry without assigning the fallback", async () => {
+      const mock = world({ fail: { jev: 1 } });
+      await expect(routeConversation(context(new MemoryStore(), fallback), 1, 5)).rejects.toThrow("503");
+      expect(mock.ticket.status).toBe("pending");
+      expect(sent(mock.requests, "POST", `${CW}/assignments`)).toEqual([]);
+      expect(sent(mock.requests, "POST", `${CW}/toggle_status`)).toEqual([]);
+    });
+  });
+
   it("leaves the existing release behavior unchanged when the hook is unset", async () => {
     const mock = world();
     await routeConversation(context(), 1, 5);

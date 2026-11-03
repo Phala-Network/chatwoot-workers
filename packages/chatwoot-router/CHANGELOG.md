@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-03
+
+### Added
+
+- Optional `routing.fallbackOwners` maps each routed account to one of its owner routes. Unclear or low-confidence
+  owners use the fallback on tickets going to people and snoozed kinds (after snoozing). Safe handoffs of bot-held
+  tickets also assign the fallback, including empty input, reply/turn uncertainty, missing canned responses,
+  processing failures, unavailable chosen agents, and disconnected inboxes. Fallbacks are validated against the
+  account's agents; public human replies and existing owners are preserved. Resolved kinds and tickets still
+  waiting for a request are unchanged. Accounts without a fallback keep the existing behavior.
+
 ## [0.12.0] - 2026-10-24
 
 ### Changed
@@ -192,7 +203,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `routing_kind`.
 - The `chatwoot-router-store-config` command and `chatwoot-router/stored-config`, for a configuration in KV.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.12.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.13.0...HEAD
+[0.13.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.12.0...chatwoot-router@0.13.0
 [0.12.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.11.0...chatwoot-router@0.12.0
 [0.11.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.10.0...chatwoot-router@0.11.0
 [0.10.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-router@0.9.0...chatwoot-router@0.10.0

@@ -121,6 +121,21 @@ describe("router configuration", () => {
     expect(valid({ ...config.routing, kinds: { "1": { spam: { covers: "Spam.", status: "resolved" } } } })).toBe(true);
   });
 
+  it("accepts optional fallback owners only for existing routes in routed accounts", () => {
+    expect(parseSettings(config, secrets).config.routing.fallbackOwners).toBeUndefined();
+    for (const fallbackOwners of [{}, { "1": "cloud" }]) {
+      expect(
+        parseSettings({ ...config, routing: { ...config.routing, fallbackOwners } }, secrets).config.routing
+          .fallbackOwners,
+      ).toEqual(fallbackOwners);
+    }
+    for (const fallbackOwners of [{ "2": "cloud" }, { "1": "missing" }, { "1": "unclear" }, { "1": "toString" }]) {
+      expect(() => parseSettings({ ...config, routing: { ...config.routing, fallbackOwners } }, secrets)).toThrow(
+        /routing.fallbackOwners/,
+      );
+    }
+  });
+
   it("requires TypeSafe and a bot even without canned responses", () => {
     expect(() => parseSettings(config, { ...secrets, TYPESAFE_API_KEY: undefined })).toThrow(/TYPESAFE_API_KEY/);
     expect(parseSettings(config, secrets).secrets.CHATWOOT_AGENT_BOT_TOKENS["1"]).toBe("bot-token");

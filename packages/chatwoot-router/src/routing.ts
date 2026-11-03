@@ -117,11 +117,21 @@ export async function routeConversation(
   const owners = routing.accounts[String(accountId)];
   const token = settings.secrets.CHATWOOT_AGENT_BOT_TOKENS[String(accountId)];
   if (!owners || !token) return;
+  const fallbackOwner = routing.fallbackOwners?.[String(accountId)];
+  const fallbackAssignee = fallbackOwner === undefined ? undefined : owners[fallbackOwner]?.assignee;
   const bot = chatwootClient(settings.config.chatwoot.baseUrl, token, ctx.fetch);
   const kinds = routing.kinds?.[String(accountId)] ?? {};
   const botId = routing.botIds[String(accountId)];
   const owns = (conversation: ChatwootConversation | undefined) =>
     conversation?.meta?.assignee_type === "AgentBot" && conversation.meta.assignee?.id === botId;
+  const hasHumanReply = (messages: ChatwootMessage[]) =>
+    messages.some(
+      (message) =>
+        message.message_type === 1 &&
+        !message.private &&
+        message.sender?.type === "user" &&
+        !message.content_attributes?.deleted,
+    );
   const release = async () => {
     const latest = await chatwoot.getConversation(accountId, conversationId);
     if (latest?.status !== undefined && latest.status !== "pending" && owns(latest)) {
@@ -147,14 +157,25 @@ export async function routeConversation(
       // Disconnect is level-triggered: native bot handoff also clears ai_assignee.
       // Re-read ownership immediately before the mutation; never touch another bot or person.
       if (owns(raw)) {
+        const fallback =
+          fallbackAssignee !== undefined &&
+          (await chatwoot.listAgents(accountId)).some((agent) => agent.id === fallbackAssignee)
+            ? fallbackAssignee
+            : undefined;
+        const turn = fallback !== undefined ? await readTurn(chatwoot, store, accountId, conversationId) : undefined;
         const latest = await chatwoot.getConversation(accountId, conversationId);
         if (latest?.status === "pending" && latest.inbox_id === raw.inbox_id && owns(latest)) {
           const conversation = toRelayConversation(conversationId, latest);
-          const turnId = routing.beforeHandoff
-            ? (await readTurn(chatwoot, store, accountId, conversationId)).boundary
-            : 0;
+          const turnId =
+            turn?.boundary ??
+            (routing.beforeHandoff ? (await readTurn(chatwoot, store, accountId, conversationId)).boundary : 0);
           await beforeHandoff(ctx, accountId, conversationId, turnId, conversation);
-          await bot.setStatus(accountId, conversationId, { status: "open" });
+          if (fallback !== undefined && !hasHumanReply(turn?.messages ?? [])) {
+            await bot.assign(accountId, conversationId, fallback);
+            expectActivity(store, accountId, conversationId, { status: "open" });
+          } else {
+            await bot.setStatus(accountId, conversationId, { status: "open" });
+          }
         }
       }
       return;
@@ -202,14 +223,14 @@ export async function routeConversation(
   const turn = await readTurn(chatwoot, store, accountId, conversationId);
   const input = inputs(turn.messages);
   const requiresHandoff = (messages: ChatwootMessage[]) =>
+    hasHumanReply(messages) ||
     messages.some(
       (message) =>
         message.message_type === 1 &&
         !message.private &&
-        ((message.sender?.type === "user" && !message.content_attributes?.deleted) ||
-          (message.sender?.type === "agent_bot" &&
-            message.sender.id === botId &&
-            (message.status === "failed" || message.content_attributes?.deleted))),
+        message.sender?.type === "agent_bot" &&
+        message.sender.id === botId &&
+        (message.status === "failed" || message.content_attributes?.deleted),
     );
 
   // A fresh read before every effect. A new input/boundary is work for a new queue run.
@@ -219,10 +240,30 @@ export async function routeConversation(
     if (isUnidentified(current.raw) !== unidentified) return "defer" as const;
     const latest = await readTurn(chatwoot, store, accountId, conversationId);
     if (latest.boundary !== turn.boundary || inputs(latest.messages).key !== input.key) return "defer" as const;
-    return { ...current, handoff: latest.handoff || requiresHandoff(latest.messages) };
+    return {
+      ...current,
+      handoff: latest.handoff || requiresHandoff(latest.messages),
+      humanReplied: hasHumanReply(latest.messages),
+    };
   };
   const handoff = async (current?: Awaited<ReturnType<typeof fresh>>) => {
     requestHandoff(store, accountId, conversationId);
+    if (current === "defer") return "defer" as const;
+    if (fallbackAssignee !== undefined && (!current || (owns(current.raw) && !current.humanReplied))) {
+      // Validate before a new fresh read: a human may take over while the account agents are fetched.
+      const agents = await chatwoot.listAgents(accountId);
+      if (agents.some((agent) => agent.id === fallbackAssignee)) {
+        current = await fresh();
+        if (current === "defer" || !current) return current;
+        if (owns(current.raw) && !current.humanReplied) {
+          await beforeHandoff(ctx, accountId, conversationId, turn.boundary, current.conversation);
+          // AssignmentService opens a pending bot-held ticket and clears ai_assignee. Nothing may follow it.
+          await bot.assign(accountId, conversationId, fallbackAssignee);
+          expectActivity(store, accountId, conversationId, { status: "open" });
+          return;
+        }
+      }
+    }
     current ??= await fresh();
     if (current === "defer") return "defer" as const;
     if (current) {
@@ -260,10 +301,9 @@ export async function routeConversation(
   // Chatwoot v4.19.0: https://github.com/chatwoot/chatwoot/blob/v4.19.0/app/models/message.rb#L414-L420
   const routesToOwner = kind?.status !== "resolved";
   // A kind is actionable even when its text happens to look like a greeting.
-  const assignee =
-    routesToOwner && decision.owner && decision.ownerConfidence >= routing.minConfidence
-      ? owners[decision.owner]?.assignee
-      : undefined;
+  const confidentOwner =
+    decision.owner && decision.ownerConfidence >= routing.minConfidence ? owners[decision.owner] : undefined;
+  const assignee = routesToOwner ? (confidentOwner?.assignee ?? fallbackAssignee) : undefined;
   let current = await fresh();
   if (current === "defer" || !current) return current;
   if (!unidentified && current.handoff) return handoff(current);
