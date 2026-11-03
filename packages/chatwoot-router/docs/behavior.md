@@ -63,11 +63,24 @@ may point to another deployment of that API, for example a proxy or gateway.
   ticket as pending and keeps its assignee; assigning a person opens a pending ticket): its turn is routed, its owner
   kept, and a greeting goes to them at once instead of waiting for a request.
   Bot and user assignees are distinguished by `assignee_type`.
+- Optional `routing.fallbackOwners` maps routed account ids to owner route names in that account's
+  `routing.accounts`. When Jev's owner is `unclear` or below `routing.minConfidence`, use this owner's assignee
+  for tickets going to people and snoozed kinds. A confident owner still wins. Greetings still wait for a request
+  until three texts or the 30-minute limit; only then can the fallback receive them. Resolved kinds, unidentified
+  contacts resolved as spam, and Jev failures awaiting retry do not get a fallback assignment. Unset or absent for
+  an account, routing is unchanged.
+  Bot-held open handoffs also use the fallback: empty input, unknown/incomplete reply history or turn boundary,
+  a missing canned response, failed/unconfirmed bot reply, an owner no longer in the account, or persisted handoff
+  after processing failures. Revalidate the fallback with `listAgents` and freshly check ownership, input and turn
+  before assigning; a fallback outside the account hands off unassigned. Public human replies and existing User
+  assignees never get replaced. A reopened ticket with no bot assignee uses native open handoff: assignment would
+  leave it pending. Changed input/turn defers; non-pending status, another bot, or a human takeover ends routing.
 - Before **each** action, re-read the inbox link, pending status, assignee, turn boundary, inputs and public human
   replies. A changed input defers the job to decide again. Apply topic/kind labels (a kind with `label: false` gets none), then the kind's canned reply,
   then end the turn: a resolved kind is set aside without assigning an owner; a snoozed kind waits for the customer
-  and still gets the confident owner. Snoozed kinds use the same topic-label rules as routed tickets; resolved
-  kinds do not get a topic. Other tickets get a confident owner or explicit bot `status=open` handoff.
+  and still gets the confident owner or configured fallback. Snoozed kinds use the same topic-label rules as routed
+  tickets; resolved kinds do not get a topic. Other tickets get a confident owner, the configured fallback, or
+  explicit bot `status=open` handoff.
   A snoozed kind with `cannedResponse` snoozes only after the current routing attempt sends and confirms its reply.
   An earlier reply found in history prevents another send but does not answer the new turn: route to the confident
   owner or hand off instead, leaving the ticket open and waiting for people. A retry that only finds history also
@@ -102,7 +115,10 @@ may point to another deployment of that API, for example a proxy or gateway.
   After three processing failures (initial, +5s, +10s), persist handoff mode. Further retries
   only revalidate the turn and hand off, with backoff capped at 30 minutes. Handoff failures keep the job; deleted
   conversations end it. Disconnected brand-bot pending tickets use native bot `status=open` handoff without Jev
-  or a turn-history read; failures retry until the handoff succeeds. Other bots and people are untouched. Credentials/service failures need repair before handoff can succeed.
+  or a turn-history read (unless required by the before-handoff hook). With an eligible fallback configured, read
+  the turn to preserve public human replies and recheck bot ownership/inbox/status before assigning the fallback
+  instead. Failures retry until the handoff succeeds. Other bots and people are untouched. Credentials/service
+  failures need repair before handoff can succeed.
 - A Worker 2xx means the job is durable, not that routing succeeded. Chatwoot's own webhook failure fallback cannot
   cover later alarm failures. Its fallback opens pending on failed `message_created`/`message_updated` delivery unless
   `keep_pending_on_bot_failure` is enabled; it may leave a bot assignee on open. The router releases that assignment on its next job or sweep.

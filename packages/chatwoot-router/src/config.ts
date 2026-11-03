@@ -39,6 +39,8 @@ export const configSchema = z
           )
           .refine((owners) => Object.keys(owners).length > 0, "needs at least one owner"),
       ),
+      /** Per routed account id: the owner route used when Jev cannot choose an owner or routing hands off. */
+      fallbackOwners: z.record(accountId, z.string()).optional(),
       /** Topic labels (Chatwoot label names, lower case) and what each covers. Unset: no topic. */
       topics: z
         .record(
@@ -81,7 +83,7 @@ export const configSchema = z
               /**
                * Set after the reply, with cannedResponse: `resolved` sets the ticket aside without
                * assigning an owner. `snoozed` waits for the customer and still assigns the confident
-               * owner. With cannedResponse, snooze only when this attempt sends and confirms the reply;
+               * owner or configured fallback. With cannedResponse, snooze only when this attempt sends and confirms the reply;
                * otherwise route normally. Without cannedResponse, snooze as configured. A new message
                * from the customer reopens either status.
                */
@@ -112,6 +114,13 @@ export const configSchema = z
     path: ["routing", "kinds"],
     message: "must only name routed accounts",
   })
+  .refine(
+    (config) =>
+      Object.entries(config.routing.fallbackOwners ?? {}).every(([id, owner]) =>
+        Object.hasOwn(config.routing.accounts[id] ?? {}, owner),
+      ),
+    { path: ["routing", "fallbackOwners"], message: "must name an existing owner route in a routed account" },
+  )
   .refine(
     (config) =>
       Object.values(config.routing.kinds ?? {}).every((kinds) =>
