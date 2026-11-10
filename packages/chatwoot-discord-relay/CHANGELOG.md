@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-10
+
+### Added
+
+- `agents[].notify` (default `true`): `false` for an agent who does not follow Discord. The relay
+  never pings them (assignee pings on customer messages and assignments, private-note mentions,
+  the support queue) or adds them to posts, and shows them by name. Their commands and `/assign`
+  to them still work.
+
 ## [0.54.0] - 2026-10-24
 
 ### Changed
@@ -1017,7 +1026,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-invocation subrequest budget, and a cron reconciliation sweep for missed webhooks.
 - Verification of Chatwoot webhook HMAC signatures and Discord Ed25519 interaction signatures.
 
-[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.54.0...HEAD
+[Unreleased]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.55.0...HEAD
+[0.55.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.54.0...chatwoot-discord-relay@0.55.0
 [0.54.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.53.0...chatwoot-discord-relay@0.54.0
 [0.53.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.52.0...chatwoot-discord-relay@0.53.0
 [0.52.0]: https://github.com/Phala-Network/chatwoot-workers/compare/chatwoot-discord-relay@0.51.0...chatwoot-discord-relay@0.52.0

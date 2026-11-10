@@ -49,7 +49,7 @@ export function relayFor(settings: Settings, forum: ForumClient, store: RelaySto
     maxChunks: settings.config.relay.maxChunks,
     triage: triageUserId ? { ...settings.config.triage, userId: triageUserId } : undefined,
     card: ticketCard,
-    linkedAgent: settings.linkedAgent,
+    linkedAgent: settings.notifiedAgent,
     // Normally every message is relayed within the sweep's window (by its webhook, or else by
     // the sweep), so an older one is history: a first sync, or a catch-up after downtime.
     liveSeconds: settings.config.reconcile.lookbackSeconds,
@@ -281,8 +281,8 @@ async function cachedInboxName(
 /**
  * The linked agents a message involves: for a private note that mentions Chatwoot users
  * (Chatwoot notifies mentions in notes only: Messages::MentionService at v4.18.0), the linked
- * agents among them by Chatwoot user id; for a message sent by a linked agent, their Discord
- * avatar.
+ * agents among them the relay may notify, by Chatwoot user id (others stay `@Name`); for a
+ * message sent by a linked agent, their Discord avatar.
  */
 async function linkedAgents(
   context: ProcessorContext,
@@ -292,7 +292,7 @@ async function linkedAgents(
   const senderId = message.message_type === 1 && message.sender?.type === "user" ? message.sender.id : undefined;
   const linked = new Map<number, string>();
   for (const userId of mentioned) {
-    const discordId = context.settings.linkedAgent(userId)?.discordUserId;
+    const discordId = context.settings.notifiedAgent(userId)?.discordUserId;
     if (discordId) linked.set(userId, discordId);
   }
   const senderDiscordId = context.settings.linkedAgent(senderId)?.discordUserId;

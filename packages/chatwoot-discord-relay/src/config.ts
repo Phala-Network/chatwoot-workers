@@ -59,6 +59,11 @@ export const configSchema = z
           discordUserId: snowflake,
           /** The Chatwoot agent's user id, which (unlike their email) they cannot change. */
           chatwootUserId: z.number().int().positive(),
+          /**
+           * False for an agent who does not follow Discord: the relay never pings them or adds them to posts, and
+           * shows them by name. Their commands and `/assign` to them still work.
+           */
+          notify: z.boolean().default(true),
         }),
       )
       .refine((agents) => unique(agents.map((agent) => agent.discordUserId)), {
@@ -188,6 +193,8 @@ export interface Settings {
   chatwootUserFor(discordUserId: string): number | undefined;
   /** Chatwoot user id -> the linked agent. */
   linkedAgent(chatwootUserId: number | null | undefined): AgentConfig | undefined;
+  /** Chatwoot user id -> the linked agent, if the relay may notify them (`notify`). */
+  notifiedAgent(chatwootUserId: number | null | undefined): AgentConfig | undefined;
   agentToken(discordUserId: string): string | undefined;
 }
 
@@ -222,6 +229,10 @@ export function buildSettings(config: Config, secrets: Secrets): Settings {
     account: (id) => accounts.get(id),
     chatwootUserFor: (discordUserId) => chatwootUsers.get(discordUserId),
     linkedAgent: (chatwootUserId) => (chatwootUserId == null ? undefined : linkedAgents.get(chatwootUserId)),
+    notifiedAgent: (chatwootUserId) => {
+      const agent = chatwootUserId == null ? undefined : linkedAgents.get(chatwootUserId);
+      return agent?.notify ? agent : undefined;
+    },
     agentToken: (discordUserId) => secrets.CHATWOOT_AGENT_TOKENS[discordUserId],
   };
 }
