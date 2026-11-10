@@ -162,7 +162,7 @@ export interface RelayOptions {
   topicAttribute: string;
   maxChunks: number;
   triage?: TriageOptions | undefined;
-  /** The agent linked to a Chatwoot user id, if any. */
+  /** The agent linked to a Chatwoot user id, if any and the relay may notify them; others are never pinged. */
   linkedAgent?: ((chatwootUserId: number) => LinkedAgent | undefined) | undefined;
   /** The post's card for the ticket, offering the draft of the triage bot's answer `answerId`; none if unset. */
   card?: ((ticket: CardTicket, answerId: string | undefined) => MessageComponents) | undefined;

@@ -36,6 +36,8 @@ deleted in Discord, it is sent again without the missing tags, and a warning nam
 
 ## Pings and notifications
 
+An agent with `notify: false` in `agents[]` is never pinged or added to a post: everything below
+shows them by name, as if they were not linked.
 - A newly assigned agent who is linked in `agents[]` is pinged once (a change of their Chatwoot
   name does not count as a new assignment), in Chatwoot's assignment line that names them
   (`Assigned to @name by Sam`; after several reassignments in a row, the line naming the last

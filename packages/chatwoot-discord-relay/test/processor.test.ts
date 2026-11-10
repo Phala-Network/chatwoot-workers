@@ -638,6 +638,39 @@ describe("processConversation", () => {
     });
   });
 
+  it("never pings an agent with notify off or adds them to the post, and shows them by name", async () => {
+    const world = new World();
+    world.messages = [{ id: 1, content: "hello", message_type: 0, created_at: now() - 60 }];
+    const settings = testSettings({
+      agents: [
+        { discordUserId: ALICE, chatwootUserId: 42 },
+        { discordUserId: BOB, chatwootUserId: 43, notify: false },
+      ],
+    });
+    await withStore(async (store) => {
+      await sync(store, settings);
+      world.conversation.meta = { ...Object(world.conversation.meta), assignee: { id: 43, name: "Bob" } };
+      world.messages.push(
+        { id: 2, content: "Assigned to Bob by Sam", message_type: 2, created_at: now() - 8 },
+        { id: 3, content: "still there?", message_type: 0, created_at: now() - 6 },
+        { id: 4, content: "[@Bob](mention://user/43/Bob) can you check?", message_type: 1, private: true },
+      );
+      await sync(store, settings);
+      afterAssignmentWait();
+      await sync(store, settings);
+      const posts = world.posts().map((post) => post.body);
+      expect(posts.map((body) => body.content)).toEqual(
+        expect.arrayContaining([
+          "-# _Assigned to Bob by Sam_",
+          "still there?",
+          "🔒 **Internal note**\n@Bob can you check?",
+        ]),
+      );
+      expect(JSON.stringify(posts)).not.toContain(BOB);
+      expect(world.sent("PUT", `/thread-members/${BOB}`)).toEqual([]);
+    });
+  });
+
   it("retries a failed assignee announcement without new messages, so the assignee is still pinged", async () => {
     const world = new World();
     world.conversation.meta = { ...Object(world.conversation.meta), assignee: { id: 43, name: "Bob" } };

@@ -20,7 +20,7 @@ export interface TriageOptions {
 interface NotifierOptions {
   store: RelayStore;
   triage?: TriageOptions | undefined;
-  /** The agent linked to a Chatwoot user id, if any. */
+  /** The agent linked to a Chatwoot user id, if any and the relay may notify them; others are never pinged. */
   linkedAgent?: ((chatwootUserId: number) => LinkedAgent | undefined) | undefined;
   /** A message created longer ago than this is history. */
   liveSeconds: number;

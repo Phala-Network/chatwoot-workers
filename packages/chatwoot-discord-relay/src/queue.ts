@@ -200,7 +200,7 @@ function messages(ctx: QueueContext, tickets: Ticket[], unread: boolean): Chunk[
     } else {
       break;
     }
-    const linked = ticket.snoozed || ticket.pending ? undefined : ctx.settings.linkedAgent(ticket.assignee?.id);
+    const linked = ticket.snoozed || ticket.pending ? undefined : ctx.settings.notifiedAgent(ticket.assignee?.id);
     if (linked) chunks.at(-1)?.users.add(linked.discordUserId);
     shown += 1;
   }
@@ -221,7 +221,7 @@ function line(ctx: QueueContext, ticket: Ticket): string {
   const url = conversationUrl(settings.frontendUrl, ticket.accountId, ticket.conversationId);
   const post = threadId ? `<#${threadId}>` : `[${ticket.accountName} #${ticket.conversationId}](<${url}>)`;
   const waiting = ticket.waitingSince ? `⏳ <t:${ticket.waitingSince}:R>` : "replied";
-  const linked = ticket.snoozed || ticket.pending ? undefined : settings.linkedAgent(ticket.assignee?.id);
+  const linked = ticket.snoozed || ticket.pending ? undefined : settings.notifiedAgent(ticket.assignee?.id);
   const owner = linked
     ? `<@${linked.discordUserId}>`
     : ticket.assignee

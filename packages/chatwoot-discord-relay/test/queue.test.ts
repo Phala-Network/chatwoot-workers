@@ -117,6 +117,19 @@ describe("support queue", () => {
     expect(message.allowed_mentions).toEqual({ parse: [], users: [ALICE], roles: [ROLE] });
   });
 
+  it("shows an assignee with notify off by name, without pinging them", async () => {
+    const { requests } = world([{ id: 2, waiting: 1, assignee: { id: 42, name: "Alice" } }]);
+    const quiet = testSettings({
+      queue: { channelId: CHANNEL, escalationRoleId: ROLE },
+      agents: [{ discordUserId: ALICE, chatwootUserId: 42, notify: false }],
+    });
+    await postQueue({ ...context(), settings: quiet }, NOW * 1000);
+    const [message] = posted(requests);
+    expect(message.content).toContain(`<t:${NOW - HOUR}:R> · Alice`);
+    expect(message.content).not.toContain(ALICE);
+    expect(message.allowed_mentions).toEqual({ parse: [], users: [], roles: [] });
+  });
+
   it("lists pending bot turns as unassigned without pinging a same-id user or escalating", async () => {
     const { requests } = world([
       { id: 9, pending: true, waiting: 30, assignee: { id: 42, name: "Bot" }, assigneeType: "AgentBot" },
